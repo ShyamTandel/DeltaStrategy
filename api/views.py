@@ -1,19 +1,18 @@
 from django.shortcuts import render
-from api.delta_client import call_delta_private
+from api.delta_client import DeltaClient
+from api.models import OptionPosition
+from api.utils import find_last_expiry_for_month, parse_expiry
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from datetime import date, datetime
+from decimal import Decimal
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
-from rest_framework.response import Response
-from rest_framework.views import APIView
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
-from django.conf import settings
-import json
-import time
-import hmac
-import hashlib
-import requests
 
 # Create your views here.
 
@@ -37,457 +36,269 @@ def health_check(request):
         'message': 'DeltaStrategy API is running'
     })
 
+# def check_delta_apikey(request):
+#     """
+#     Simple endpoint to check your Delta API key by calling GET /v2/wallet/balances
+#     """
+#     try:
+#         resp = call_delta_private("GET", "/v2/wallet/balances", params=None, body="")
+#     except Exception as e:
+#         return JsonResponse({"success": False, "error": "client_error", "details": str(e)}, status=500)
 
-class DeltaAPIClient:
-    """
-    Delta Exchange API Client for authentication and API calls
-    """
-    def __init__(self):
-        self.base_url = 'https://api.india.delta.exchange'
-        self.api_key = settings.API_KEY
-        self.api_secret = settings.API_SECRET
-        
-    def generate_signature(self, secret, message):
-        """
-        Generate HMAC signature for Delta API authentication
-        """
-        message = bytes(message, 'utf-8')
-        secret = bytes(secret, 'utf-8')
-        hash = hmac.new(secret, message, hashlib.sha256)
-        return hash.hexdigest()
-    
-    def get_auth_headers(self, method, path, query_string='', payload=''):
-        """
-        Generate authentication headers for Delta API
-        """
-        # Adjust timestamp to account for time drift
-        # Based on error response, local time is ~21 seconds ahead of server time
-        timestamp = str(int(time.time()) - 25)  # Subtract 25 seconds for safety
-        signature_data = method + timestamp + path + query_string + payload
-        signature = self.generate_signature(self.api_secret, signature_data)
-        
-        return {
-            'api-key': self.api_key,
-            'timestamp': timestamp,
-            'signature': signature,
-            'User-Agent': 'python-rest-client',
-            'Content-Type': 'application/json'
-        }
-    
-    def make_request(self, method, endpoint, params=None, data=None):
-        """
-        Make authenticated request to Delta API
-        """
-        url = f"{self.base_url}{endpoint}"
-        query_string = ''
-        payload = ''
-        
-        if params:
-            query_string = '?' + '&'.join([f"{k}={v}" for k, v in params.items()])
-        
-        if data:
-            payload = json.dumps(data)
-            
-        headers = self.get_auth_headers(method, endpoint, query_string, payload)
-        
-        try:
-            if method.upper() == 'GET':
-                response = requests.get(url, params=params, headers=headers, timeout=(3, 27))
-            elif method.upper() == 'POST':
-                response = requests.post(url, json=data, headers=headers, timeout=(3, 27))
-            elif method.upper() == 'PUT':
-                response = requests.put(url, json=data, headers=headers, timeout=(3, 27))
-            elif method.upper() == 'DELETE':
-                response = requests.delete(url, json=data, headers=headers, timeout=(3, 27))
-            else:
-                raise ValueError(f"Unsupported HTTP method: {method}")
-                
-            response.raise_for_status()
-            return response.json()
-            
-        except requests.exceptions.RequestException as e:
-            # Add more detailed error information
-            error_details = f"API request failed: {str(e)}"
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    error_response = e.response.json()
-                    error_details += f" - Response: {error_response}"
-                except:
-                    error_details += f" - Response text: {e.response.text}"
-                error_details += f" - Headers sent: {headers}"
-                error_details += f" - URL: {url}"
-            raise Exception(error_details)
+#     # forward status and json (or raw text)
+#     try:
+#         data = resp.json()
+#     except ValueError:
+#         data = {"text": resp.text}
+
+#     return JsonResponse({
+#         "success": resp.status_code == 200,
+#         "http_status": resp.status_code,
+#         "response": data
+#     }, status=200 if resp.status_code == 200 else resp.status_code)
 
 
-class DeltaAccountDataView(APIView):
+
+
+#################################################################
+
+
+class StartMonthCycleAPIView(APIView):
     """
-    Delta Exchange Account Data API View
-    Fetches user account information from Delta Exchange
+    POST /api/start-cycle/
+    Body: { "underlying": "BTC", "reference_date": "YYYY-MM-DD" }  # reference_date optional
+    This endpoint implements steps 1-8 (initial sells on first day) and then enters
+    a loop implementing step 9-14 until termination conditions.
+    NOTE: For production, run via scheduler on first day of month. This endpoint runs
+    the flow synchronously (danger: it may make many API calls). Use with caution.
     """
-    permission_classes = [AllowAny]
-    
-    def __init__(self):
-        super().__init__()
-        self.delta_client = DeltaAPIClient()
-    
-    def get(self, request):
-        """
-        Get Delta Exchange account data
-        """
-        try:
-            # Check if API credentials are configured
-            if not settings.API_KEY or not settings.API_SECRET:
-                return Response({
-                    'success': False,
-                    'error': 'Delta API credentials not configured. Please set API_KEY and API_SECRET in environment variables.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Get user profile data
-            profile_data = self.delta_client.make_request('GET', '/v2/profile')
-            
-            # Get wallet balances
-            wallet_data = self.delta_client.make_request('GET', '/v2/wallet/balances')
-            
-            # Get user trading preferences
-            preferences_data = self.delta_client.make_request('GET', '/v2/users/trading_preferences')
-            
-            # Combine the data
-            account_data = {
-                'success': True,
-                'data': {
-                    'profile': profile_data.get('result', {}),
-                    'wallet': {
-                        'balances': wallet_data.get('result', []),
-                        'meta': wallet_data.get('meta', {})
-                    },
-                    'trading_preferences': preferences_data.get('result', {}),
-                    'timestamp': timezone.now().isoformat()
-                }
-            }
-            
-            return Response(account_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Failed to fetch account data: {str(e)}',
-                'timestamp': timezone.now().isoformat()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-    
+    permission_classes = [AllowAny]  # Change as needed for security
     def post(self, request):
-        """
-        Get specific account data based on request parameters
-        """
-        try:
-            # Check if API credentials are configured
-            if not settings.API_KEY or not settings.API_SECRET:
-                return Response({
-                    'success': False,
-                    'error': 'Delta API credentials not configured. Please set API_KEY and API_SECRET in environment variables.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            data_type = request.data.get('data_type', 'profile')
-            
-            response_data = {
-                'success': True,
-                'data': {},
-                'timestamp': timezone.now().isoformat()
-            }
-            
-            if data_type == 'profile' or data_type == 'all':
-                profile_data = self.delta_client.make_request('GET', '/v2/profile')
-                response_data['data']['profile'] = profile_data.get('result', {})
-            
-            if data_type == 'wallet' or data_type == 'all':
-                wallet_data = self.delta_client.make_request('GET', '/v2/wallet/balances')
-                response_data['data']['wallet'] = {
-                    'balances': wallet_data.get('result', []),
-                    'meta': wallet_data.get('meta', {})
-                }
-            
-            if data_type == 'positions' or data_type == 'all':
-                positions_data = self.delta_client.make_request('GET', '/v2/positions')
-                response_data['data']['positions'] = positions_data.get('result', [])
-            
-            if data_type == 'orders' or data_type == 'all':
-                orders_data = self.delta_client.make_request('GET', '/v2/orders')
-                response_data['data']['orders'] = orders_data.get('result', [])
-            
-            if data_type == 'preferences' or data_type == 'all':
-                preferences_data = self.delta_client.make_request('GET', '/v2/users/trading_preferences')
-                response_data['data']['trading_preferences'] = preferences_data.get('result', {})
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Failed to fetch account data: {str(e)}',
-                'timestamp': timezone.now().isoformat()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        underlying = request.data.get("underlying", "BTC")
+        reference_date = request.data.get("reference_date")
+        if reference_date:
+            ref = datetime.fromisoformat(reference_date).date()
+        else:
+            ref = date.today()
 
+        # Only run on first day of month per FDD step 7
+        if ref.day != 1:
+            # We won't block it; but per FDD, this should be run on first day
+            pass
 
-class DeltaMarketDataView(APIView):
-    """
-    Delta Exchange Market Data API View
-    Fetches market data from Delta Exchange (no authentication required)
-    """
-    permission_classes = [AllowAny]
-    
-    def __init__(self):
-        super().__init__()
-        self.base_url = 'https://api.india.delta.exchange'
-    
-    def get(self, request):
-        """
-        Get market data (products, tickers, etc.)
-        """
-        try:
-            data_type = request.query_params.get('type', 'products')
-            symbol = request.query_params.get('symbol', None)
-            
-            response_data = {
-                'success': True,
-                'data': {},
-                'timestamp': timezone.now().isoformat()
+        client = DeltaClient()
+
+        # Step 1-2: Get option chain and select that month's last expiry
+        tickers_resp = client.get_option_chain(underlying=underlying)
+        print("Tickers response:", tickers_resp)
+        tickers = tickers_resp.get("result", [])
+        print("Tickers response result:", tickers)
+        last_expiry = find_last_expiry_for_month(tickers, ref)
+        if not last_expiry:
+            return Response({"error": "No expiry found for this month"}, status=status.HTTP_404_NOT_FOUND)
+
+        expiry_str = last_expiry.strftime("%d-%m-%Y")
+        tickers_resp = client.get_option_chain(underlying=underlying, expiry_date=expiry_str)
+        tickers = tickers_resp.get("result", [])
+
+        # Step 3: find deltas in ranges
+        # Step 4: find 0.16 to 0.22 in calls (positive), step 5: -0.16 to -0.22 in puts
+        call_candidates = []
+        put_candidates = []
+        for t in tickers:
+            if not t.get("greeks"):
+                continue
+            delta = float(t["greeks"].get("delta", 0))
+            ct = t.get("contract_type", "")
+            if ct == "call_options" or ("C-" in t.get("symbol","")):
+                if 0.16 <= delta <= 0.22:
+                    call_candidates.append(t)
+            elif ct == "put_options" or ("P-" in t.get("symbol","")):
+                if -0.22 <= delta <= -0.16:
+                    put_candidates.append(t)
+
+        if not call_candidates or not put_candidates:
+            return Response({"error":"couldn't find required options in delta ranges",
+                             "calls_found": len(call_candidates),
+                             "puts_found": len(put_candidates)}, status=status.HTTP_404_NOT_FOUND)
+
+        # Step 6: sell the lowest delta option that you find in each defined range for calls & puts
+        # (lowest delta meaning numerically smallest absolute delta that is inside range)
+        def lowest_delta_option(lst, is_put=False):
+            # For put deltas negative; choose most negative closest to -0.16? The FDD says "lowest delta"
+            # We'll choose min(abs(delta)) -> i.e., the option that has the smallest absolute delta value within range
+            best = min(lst, key=lambda x: abs(float(x["greeks"].get("delta", 0))))
+            return best
+
+        call_to_sell = lowest_delta_option(call_candidates)
+        put_to_sell = lowest_delta_option(put_candidates, is_put=True)
+
+        # Helper to place sell order (we use market order size 1 by default)
+        def place_sell(ticker_obj, size=1):
+            product_id = ticker_obj.get("product_id")
+            symbol = ticker_obj.get("symbol")
+            # create order body: sell 1 contract as market or limit if ask present
+            best_bid = ticker_obj.get("quotes", {}).get("best_bid")
+            body = {
+                "product_id": product_id,
+                "size": size,
+                "side": "sell",
+                "order_type": "market_order"
             }
-            
-            if data_type == 'products':
-                # Get all products
-                url = f"{self.base_url}/v2/products"
-                response = requests.get(url, timeout=(3, 27))
-                response.raise_for_status()
-                products_data = response.json()
-                response_data['data']['products'] = products_data.get('result', [])
-                
-            elif data_type == 'ticker':
-                if symbol:
-                    # Get ticker for specific symbol
-                    url = f"{self.base_url}/v2/tickers/{symbol}"
-                    response = requests.get(url, timeout=(3, 27))
-                    response.raise_for_status()
-                    ticker_data = response.json()
-                    response_data['data']['ticker'] = ticker_data.get('result', {})
+            res = client.place_order(body)
+            return res
+
+        # Place initial sells (these should be done on first day)
+        call_order_res = place_sell(call_to_sell, size=1)
+        put_order_res = place_sell(put_to_sell, size=1)
+
+        # Save to DB
+        def save_pos(resp, ticker_obj):
+            r = resp.get("result", {})
+            p = OptionPosition.objects.create(
+                product_id = ticker_obj.get("product_id"),
+                symbol = ticker_obj.get("symbol"),
+                side = "sell",
+                size = 1,
+                limit_price = None,
+                mark_price = Decimal(ticker_obj.get("mark_price") or ticker_obj.get("quotes", {}).get("best_bid") or 0),
+                strike_price = Decimal(ticker_obj.get("strike_price")),
+                delta = float(ticker_obj.get("greeks", {}).get("delta", 0)),
+                expiry_date = parse_expiry(ticker_obj.get("expiry_date")),
+                remote_order_id = r.get("id")
+            )
+            return p
+
+        pos_call = save_pos(call_order_res, call_to_sell)
+        pos_put = save_pos(put_order_res, put_to_sell)
+
+        # Now loop implementing steps 9-14
+        # We'll implement a safe loop with a max iteration count to avoid infinite loops
+        max_iters = 10
+        iters = 0
+        actions = []
+        while iters < max_iters:
+            iters += 1
+            # refresh tickers for the expiry
+            tickers_resp = client.get_option_chain(underlying=underlying, expiry_date=expiry_str)
+            tickers = tickers_resp.get("result", [])
+
+            # get current mark_price of our two positions
+            open_positions = list(OptionPosition.objects.filter(active=True).order_by('created_at'))
+            if len(open_positions) == 0:
+                break
+
+            # if only one position open (step 11) then we need to find opposite side matching delta within ±0.03
+            if len(open_positions) == 1:
+                open_pos = open_positions[0]
+                target_delta = open_pos.delta
+                # if open is put (negative), we search calls with +delta approx equal
+                if open_pos.symbol.startswith("P-") or open_pos.delta < 0:
+                    target_low = target_delta + 0.0  # negative
+                    desired_low = target_delta * -1 if target_delta < 0 else target_delta
+                    # search for call with delta approx equal to abs(target_delta) ±0.03
+                    target_min = abs(target_delta) - 0.03
+                    target_max = abs(target_delta) + 0.03
+                    # find candidate calls
+                    calls = [t for t in tickers if ("C-" in t.get("symbol","") or t.get("contract_type")=="call_options")]
+                    matching = []
+                    for c in calls:
+                        try:
+                            d = float(c["greeks"]["delta"])
+                            if target_min <= d <= target_max:
+                                matching.append(c)
+                        except:
+                            pass
+                    if matching:
+                        # sell the one found (step 13)
+                        candidate = min(matching, key=lambda x: abs(float(x["greeks"]["delta"]) - abs(target_delta)))
+                        res = place_sell(candidate, size=1)
+                        save_pos(res, candidate)
+                        actions.append(f"sold matching call {candidate['symbol']}")
                 else:
-                    # Get all tickers
-                    url = f"{self.base_url}/v2/tickers"
-                    response = requests.get(url, timeout=(3, 27))
-                    response.raise_for_status()
-                    tickers_data = response.json()
-                    response_data['data']['tickers'] = tickers_data.get('result', [])
-            
-            elif data_type == 'orderbook':
-                if not symbol:
-                    return Response({
-                        'success': False,
-                        'error': 'Symbol parameter is required for orderbook data'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                url = f"{self.base_url}/v2/l2orderbook/{symbol}"
-                response = requests.get(url, timeout=(3, 27))
-                response.raise_for_status()
-                orderbook_data = response.json()
-                response_data['data']['orderbook'] = orderbook_data.get('result', {})
-            
-            elif data_type == 'trades':
-                if not symbol:
-                    return Response({
-                        'success': False,
-                        'error': 'Symbol parameter is required for trades data'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-                
-                url = f"{self.base_url}/v2/trades/{symbol}"
-                response = requests.get(url, timeout=(3, 27))
-                response.raise_for_status()
-                trades_data = response.json()
-                response_data['data']['trades'] = trades_data.get('result', {})
-            
-            return Response(response_data, status=status.HTTP_200_OK)
-            
-        except requests.exceptions.RequestException as e:
-            return Response({
-                'success': False,
-                'error': f'Failed to fetch market data: {str(e)}',
-                'timestamp': timezone.now().isoformat()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-        except Exception as e:
-            return Response({
-                'success': False,
-                'error': f'Unexpected error: {str(e)}',
-                'timestamp': timezone.now().isoformat()
-            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                    # open is call; find put matching delta
+                    target_min = abs(target_delta) - 0.03
+                    target_max = abs(target_delta) + 0.03
+                    puts = [t for t in tickers if ("P-" in t.get("symbol","") or t.get("contract_type")=="put_options")]
+                    matching = []
+                    for p in puts:
+                        try:
+                            d = abs(float(p["greeks"]["delta"]))  # put delta negative
+                            if target_min <= d <= target_max:
+                                matching.append(p)
+                        except:
+                            pass
+                    if matching:
+                        candidate = min(matching, key=lambda x: abs(abs(float(x["greeks"]["delta"])) - abs(target_delta)))
+                        res = place_sell(candidate, size=1)
+                        save_pos(res, candidate)
+                        actions.append(f"sold matching put {candidate['symbol']}")
 
+            # Step 9: condition if any option's price becomes double compared to other options position then step 10 applied
+            # We'll compute mark_price for each open position by matching symbol in tickers
+            current_prices = {}
+            for p in open_positions:
+                # find matching ticker
+                match = next((t for t in tickers if t.get("symbol")==p.symbol), None)
+                if match:
+                    current_prices[p.id] = float(match.get("mark_price") or match.get("quotes", {}).get("best_bid") or 0)
+                else:
+                    current_prices[p.id] = float(p.mark_price or 0)
 
-@api_view(['GET'])
-@permission_classes([AllowAny])
-def debug_delta_auth(request):
-    """
-    Debug endpoint to test Delta API authentication
-    """
-    try:
-        # Check credentials
-        api_key = settings.API_KEY
-        api_secret = settings.API_SECRET
-        
-        if not api_key or not api_secret:
-            return Response({
-                'success': False,
-                'error': 'API credentials not configured',
-                'debug': {
-                    'api_key_exists': bool(api_key),
-                    'api_secret_exists': bool(api_secret),
-                    'api_key_length': len(api_key) if api_key else 0,
-                    'api_secret_length': len(api_secret) if api_secret else 0
-                }
-            })
-        
-        # Create client and test basic signature generation
-        client = DeltaAPIClient()
-        
-        # Test signature generation
-        test_message = "GET123456789/v2/profile"
-        test_signature = client.generate_signature(api_secret, test_message)
-        
-        # Test header generation
-        headers = client.get_auth_headers('GET', '/v2/profile')
-        
-        # Test public API call (no auth required)
-        public_test = None
-        try:
-            public_response = requests.get(f"{client.base_url}/v2/products", timeout=(3, 27))
-            public_test = {
-                'status_code': public_response.status_code,
-                'success': public_response.status_code == 200,
-                'products_count': len(public_response.json().get('result', [])) if public_response.status_code == 200 else 0
-            }
-        except Exception as e:
-            public_test = {
-                'error': str(e),
-                'success': False
-            }
-        
-        # Test authenticated API call with detailed error info
-        auth_test = None
-        try:
-            auth_response = requests.get(f"{client.base_url}/v2/profile", headers=headers, timeout=(3, 27))
-            auth_test = {
-                'status_code': auth_response.status_code,
-                'success': auth_response.status_code == 200
-            }
-            if auth_response.status_code != 200:
-                auth_test['error_response'] = auth_response.text[:500]  # First 500 chars
-        except Exception as e:
-            auth_test = {
-                'error': str(e),
-                'success': False
-            }
-        
+            # if there are exactly 2 positions compare their prices
+            if len(open_positions) >= 2:
+                p1, p2 = open_positions[0], open_positions[1]
+                price1 = current_prices.get(p1.id, 0)
+                price2 = current_prices.get(p2.id, 0)
+                # if any option price becomes double compared to other -> close the cheaper one (step 10)
+                if price1 >= 2*price2:
+                    # close p2 (the less price compared) -> "cut off"
+                    # We'll cancel/close by placing a market buy equal size to cover the sold option
+                    close_body = {"product_id": p2.product_id, "size": p2.size, "side": "buy", "order_type":"market_order"}
+                    client.place_order(close_body)
+                    p2.active = False
+                    p2.save()
+                    actions.append(f"closed {p2.symbol} because {p1.symbol} doubled {price1} vs {price2}")
+                elif price2 >= 2*price1:
+                    close_body = {"product_id": p1.product_id, "size": p1.size, "side": "buy", "order_type":"market_order"}
+                    client.place_order(close_body)
+                    p1.active = False
+                    p1.save()
+                    actions.append(f"closed {p1.symbol} because {p2.symbol} doubled {price2} vs {price1}")
+
+            # Step 15: Ensure strike prices never cross — check strike ordering
+            open_positions = list(OptionPosition.objects.filter(active=True))
+            if len(open_positions) >= 2:
+                s1 = float(open_positions[0].strike_price)
+                s2 = float(open_positions[1].strike_price)
+                # If they cross (call strike < put strike) — this violates condition; in that case we close the later-opened
+                if (open_positions[0].symbol.startswith("C-") and open_positions[1].symbol.startswith("P-") and s1 < s2) or \
+                   (open_positions[0].symbol.startswith("P-") and open_positions[1].symbol.startswith("C-") and s2 < s1):
+                    # close the one with less recently created (safe heuristic)
+                    to_close = open_positions[-1]
+                    client.place_order({"product_id": to_close.product_id, "size": to_close.size, "side":"buy", "order_type":"market_order"})
+                    to_close.active = False
+                    to_close.save()
+                    actions.append(f"closed {to_close.symbol} to avoid strike crossing")
+
+            # termination: if both open positions have same strike (step 16) -> done
+            open_positions = list(OptionPosition.objects.filter(active=True))
+            if len(open_positions) == 2:
+                if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
+                    actions.append("termination: strikes matched")
+                    break
+
+            # small sleep avoidance: we don't sleep in this synchronous endpoint; loop continues but with max_iters limit
+            # If no actionable events in this iteration, break to avoid busy loop
+            if not actions:
+                # nothing happened in this iteration -> stop
+                break
+
         return Response({
-            'success': True,
-            'debug': {
-                'api_key_length': len(api_key),
-                'api_secret_length': len(api_secret),
-                'base_url': client.base_url,
-                'test_signature': test_signature,
-                'headers': {
-                    'api-key': headers.get('api-key'),
-                    'timestamp': headers.get('timestamp'),
-                    'signature_length': len(headers.get('signature', '')),
-                    'user_agent': headers.get('User-Agent'),
-                    'content_type': headers.get('Content-Type')
-                },
-                'public_api_test': public_test,
-                'auth_api_test': auth_test
-            }
+            "status": "completed",
+            "initial": {
+                "call_sold": call_to_sell.get("symbol"),
+                "put_sold": put_to_sell.get("symbol"),
+            },
+            "actions": actions
         })
-        
-    except Exception as e:
-        return Response({
-            'success': False,
-            'error': f'Debug failed: {str(e)}'
-        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-import time
-import hashlib
-import hmac
-import requests
-
-from rest_framework.views import APIView
-from rest_framework.response import Response
-from rest_framework import status
-from rest_framework.permissions import AllowAny
-
-# Delta Exchange API details
-BASE_URL = "https://api.india.delta.exchange"
-API_KEY = settings.API_KEY
-API_SECRET = settings.API_SECRET
-
-def generate_timestamp():
-    return str(int(time.time()))  # seconds only
-
-class DeltaAccountView(APIView):
-    permission_classes = [AllowAny]
-
-    def get(self, request):
-        try:
-            path = "/v2/wallet/balances"
-            method = "GET"
-            query = ""
-
-            timestamp = generate_timestamp()
-
-            to_sign = method + timestamp + path + query
-            signature = hmac.new(
-                API_SECRET.encode("utf-8"),
-                to_sign.encode("utf-8"),
-                hashlib.sha256
-            ).hexdigest()
-
-            headers = {
-                "Accept": "application/json",
-                "api-key": API_KEY,
-                "signature": signature,
-                "timestamp": timestamp,
-            }
-
-            url = BASE_URL + path
-            resp = requests.get(url, headers=headers)
-
-            try:
-                data = resp.json()
-            except Exception:
-                return Response(
-                    {"error": f"Non-JSON response: {resp.status_code}, {resp.text}"},
-                    status=resp.status_code
-                )
-
-            return Response(data, status=resp.status_code)
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-# yourapp/views.py
-from django.http import JsonResponse
-
-def check_delta_apikey(request):
-    """
-    Simple endpoint to check your Delta API key by calling GET /v2/wallet/balances
-    """
-    try:
-        resp = call_delta_private("GET", "/v2/wallet/balances", params=None, body="")
-    except Exception as e:
-        return JsonResponse({"success": False, "error": "client_error", "details": str(e)}, status=500)
-
-    # forward status and json (or raw text)
-    try:
-        data = resp.json()
-    except ValueError:
-        data = {"text": resp.text}
-
-    return JsonResponse({
-        "success": resp.status_code == 200,
-        "http_status": resp.status_code,
-        "response": data
-    }, status=200 if resp.status_code == 200 else resp.status_code)
-
