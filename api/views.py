@@ -1,7 +1,7 @@
 from django.shortcuts import render
 from api.delta_client import DeltaClient
 from api.models import OptionPosition
-from api.utils import find_last_expiry_for_month, parse_expiry
+from api.utils import find_last_expiry_for_month, parse_expiry, extract_expiry_from_symbol
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -59,13 +59,11 @@ class StartMonthCycleAPIView(APIView):
             # We won't block it; but per FDD, this should be run on first day
             pass
 
-        client = DeltaClient()
+        client = DeltaClient(debug=True)
 
         # Step 1-2: Get option chain and select that month's last expiry
         tickers_resp = client.get_option_chain(underlying=underlying)
-        print("Tickers response:", tickers_resp)
         tickers = tickers_resp.get("result", [])
-        print("Tickers response result:", tickers)
         last_expiry = find_last_expiry_for_month(tickers, ref)
         if not last_expiry:
             return Response({"error": "No expiry found for this month"}, status=status.HTTP_404_NOT_FOUND)
@@ -78,15 +76,27 @@ class StartMonthCycleAPIView(APIView):
         # Step 4: find 0.16 to 0.22 in calls (positive), step 5: -0.16 to -0.22 in puts
         call_candidates = []
         put_candidates = []
+
         for t in tickers:
-            if not t.get("greeks"):
+            greeks = t.get("greeks")
+            if not greeks:
                 continue
-            delta = float(t["greeks"].get("delta", 0))
-            ct = t.get("contract_type", "")
-            if ct == "call_options" or ("C-" in t.get("symbol","")):
+
+            try:
+                delta = float(greeks.get("delta", 0))
+            except ValueError:
+                continue
+
+            symbol = t.get("symbol", "")
+            contract_type = t.get("contract_type", "").lower()
+
+            # Check call options
+            if contract_type == "call_options" or "c-" in symbol.lower():
                 if 0.16 <= delta <= 0.22:
                     call_candidates.append(t)
-            elif ct == "put_options" or ("P-" in t.get("symbol","")):
+
+            # Check put options
+            if contract_type == "put_options" or "p-" in symbol.lower():
                 if -0.22 <= delta <= -0.16:
                     put_candidates.append(t)
 
@@ -107,7 +117,7 @@ class StartMonthCycleAPIView(APIView):
         put_to_sell = lowest_delta_option(put_candidates, is_put=True)
 
         # Helper to place sell order (we use market order size 1 by default)
-        def place_sell(ticker_obj, size=1):
+        def place_sell(ticker_obj, size=2):
             product_id = ticker_obj.get("product_id")
             symbol = ticker_obj.get("symbol")
             # create order body: sell 1 contract as market or limit if ask present
@@ -122,29 +132,29 @@ class StartMonthCycleAPIView(APIView):
             return res
 
         # Place initial sells (these should be done on first day)
-        call_order_res = place_sell(call_to_sell, size=1)
-        put_order_res = place_sell(put_to_sell, size=1)
-
+        call_order_res = place_sell(call_to_sell, size=2)
+        put_order_res = place_sell(put_to_sell, size=2)
         # Save to DB
         def save_pos(resp, ticker_obj):
             r = resp.get("result", {})
+            # Extract expiry from symbol since expiry_date field might not be available
+            expiry_date = extract_expiry_from_symbol(ticker_obj.get("symbol", ""))
             p = OptionPosition.objects.create(
                 product_id = ticker_obj.get("product_id"),
                 symbol = ticker_obj.get("symbol"),
                 side = "sell",
-                size = 1,
+                size = 2,
                 limit_price = None,
                 mark_price = Decimal(ticker_obj.get("mark_price") or ticker_obj.get("quotes", {}).get("best_bid") or 0),
                 strike_price = Decimal(ticker_obj.get("strike_price")),
                 delta = float(ticker_obj.get("greeks", {}).get("delta", 0)),
-                expiry_date = parse_expiry(ticker_obj.get("expiry_date")),
+                expiry_date = expiry_date,
                 remote_order_id = r.get("id")
             )
             return p
 
         pos_call = save_pos(call_order_res, call_to_sell)
         pos_put = save_pos(put_order_res, put_to_sell)
-
         # Now loop implementing steps 9-14
         # We'll implement a safe loop with a max iteration count to avoid infinite loops
         max_iters = 10
@@ -185,7 +195,7 @@ class StartMonthCycleAPIView(APIView):
                     if matching:
                         # sell the one found (step 13)
                         candidate = min(matching, key=lambda x: abs(float(x["greeks"]["delta"]) - abs(target_delta)))
-                        res = place_sell(candidate, size=1)
+                        res = place_sell(candidate, size=2)
                         save_pos(res, candidate)
                         actions.append(f"sold matching call {candidate['symbol']}")
                 else:
@@ -203,7 +213,7 @@ class StartMonthCycleAPIView(APIView):
                             pass
                     if matching:
                         candidate = min(matching, key=lambda x: abs(abs(float(x["greeks"]["delta"])) - abs(target_delta)))
-                        res = place_sell(candidate, size=1)
+                        res = place_sell(candidate, size=2)
                         save_pos(res, candidate)
                         actions.append(f"sold matching put {candidate['symbol']}")
 
@@ -214,7 +224,7 @@ class StartMonthCycleAPIView(APIView):
                 # find matching ticker
                 match = next((t for t in tickers if t.get("symbol")==p.symbol), None)
                 if match:
-                    current_prices[p.id] = float(match.get("mark_price") or match.get("quotes", {}).get("best_bid") or 0)
+                    current_prices[p.id] = float(match.get("mark_price") or 0)
                 else:
                     current_prices[p.id] = float(p.mark_price or 0)
 
