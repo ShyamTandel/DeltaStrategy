@@ -22,8 +22,7 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('admin/', admin.site.urls),
     path('api/health/', views.health_check, name='health_check'),
-    path('api/delta/account/', views.DeltaAccountView.as_view(), name='delta_account_data'),
-    path('api/delta/market/', views.DeltaMarketDataView.as_view(), name='delta_market_data'),
-    path('api/debug/auth/', views.debug_delta_auth, name='debug_delta_auth'),
-    path('api/check-delta/', views.check_delta_apikey, name='check-delta')
+    # path('api/check-delta/', views.check_delta_apikey, name='check-delta'),
+    path('api/start-cycle/', views.StartMonthCycleAPIView.as_view(), name='start-cycle'),
+
 ]

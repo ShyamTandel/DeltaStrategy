@@ -158,5 +158,6 @@ CORS_ALLOW_CREDENTIALS = True
 # For development, you might want to allow all origins
 CORS_ALLOW_ALL_ORIGINS = True
 
-API_KEY = os.getenv("API_KEY")
-API_SECRET = os.getenv("API_SECRET")
+DELTA_API_KEY = os.getenv("DELTA_API_KEY")
+DELTA_API_SECRET = os.getenv("DELTA_API_SECRET")
+DELTA_API_BASE = os.getenv("DELTA_API_BASE")
