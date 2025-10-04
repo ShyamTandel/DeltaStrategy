@@ -1,4 +1,5 @@
 from django.shortcuts import render
+from api.delta_client import call_delta_private
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
@@ -464,3 +465,29 @@ class DeltaAccountView(APIView):
 
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# yourapp/views.py
+from django.http import JsonResponse
+
+def check_delta_apikey(request):
+    """
+    Simple endpoint to check your Delta API key by calling GET /v2/wallet/balances
+    """
+    try:
+        resp = call_delta_private("GET", "/v2/wallet/balances", params=None, body="")
+    except Exception as e:
+        return JsonResponse({"success": False, "error": "client_error", "details": str(e)}, status=500)
+
+    # forward status and json (or raw text)
+    try:
+        data = resp.json()
+    except ValueError:
+        data = {"text": resp.text}
+
+    return JsonResponse({
+        "success": resp.status_code == 200,
+        "http_status": resp.status_code,
+        "response": data
+    }, status=200 if resp.status_code == 200 else resp.status_code)
+
