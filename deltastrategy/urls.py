@@ -25,4 +25,5 @@ urlpatterns = [
     path('api/delta/account/', views.DeltaAccountView.as_view(), name='delta_account_data'),
     path('api/delta/market/', views.DeltaMarketDataView.as_view(), name='delta_market_data'),
     path('api/debug/auth/', views.debug_delta_auth, name='debug_delta_auth'),
+    path('api/check-delta/', views.check_delta_apikey, name='check-delta')
 ]
