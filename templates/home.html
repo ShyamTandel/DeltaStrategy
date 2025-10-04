@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+
+{% block title %}Home - DeltaStrategy{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section class="hero-section">
+    <div class="container">
+        <div class="row align-items-center">
+            <div class="col-lg-6">
+                <h1 class="display-4 fw-bold mb-4">Welcome to DeltaStrategy</h1>
+                <p class="lead mb-4">
+                    Advanced trading strategies and market analysis platform designed to help you make informed investment decisions.
+                </p>
+                <div class="d-flex gap-3">
+                    <a href="/api/health/" class="btn btn-light btn-lg">
+                        <i class="fas fa-heartbeat me-2"></i>Check API Status
+                    </a>
+                    <a href="/admin/" class="btn btn-outline-light btn-lg">
+                        <i class="fas fa-cog me-2"></i>Admin Panel
+                    </a>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="text-center">
+                    <i class="fas fa-chart-line" style="font-size: 8rem; opacity: 0.3;"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Features Section -->
+<section class="py-5">
+    <div class="container">
+        <div class="row text-center mb-5">
+            <div class="col-12">
+                <h2 class="display-5 fw-bold mb-3">Platform Features</h2>
+                <p class="lead text-muted">Discover what makes DeltaStrategy unique</p>
+            </div>
+        </div>
+        
+        <div class="row g-4">
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <i class="fas fa-robot fa-3x text-primary mb-3"></i>
+                        <h5 class="card-title">API Integration</h5>
+                        <p class="card-text">
+                            Powerful REST API for seamless integration with your trading systems and applications.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <i class="fas fa-chart-bar fa-3x text-success mb-3"></i>
+                        <h5 class="card-title">Market Analysis</h5>
+                        <p class="card-text">
+                            Advanced analytics and real-time market data processing for informed decision making.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card h-100 text-center p-4">
+                    <div class="card-body">
+                        <i class="fas fa-shield-alt fa-3x text-warning mb-3"></i>
+                        <h5 class="card-title">Secure & Reliable</h5>
+                        <p class="card-text">
+                            Enterprise-grade security with robust authentication and data protection measures.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Status Section -->
+<section class="py-5 bg-light">
+    <div class="container">
+        <div class="row">
+            <div class="col-lg-8 mx-auto">
+                <div class="card">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="card-title mb-0">
+                            <i class="fas fa-server me-2"></i>System Status
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>API Status</h6>
+                                <span class="badge bg-success">
+                                    <i class="fas fa-check-circle me-1"></i>Operational
+                                </span>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Database</h6>
+                                <span class="badge bg-success">
+                                    <i class="fas fa-database me-1"></i>Connected
+                                </span>
+                            </div>
+                        </div>
+                        <hr>
+                        <div class="d-flex justify-content-between align-items-center">
+                            <small class="text-muted">Last updated: {{ current_time|date:"M d, Y H:i" }}</small>
+                            <a href="/api/health/" class="btn btn-sm btn-outline-primary">
+                                <i class="fas fa-sync-alt me-1"></i>Refresh Status
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Quick Actions -->
+<section class="py-5">
+    <div class="container">
+        <div class="row text-center">
+            <div class="col-12 mb-4">
+                <h3>Quick Actions</h3>
+            </div>
+            <div class="col-md-3 mb-3">
+                <a href="/admin/" class="btn btn-outline-primary btn-lg w-100">
+                    <i class="fas fa-user-shield d-block mb-2" style="font-size: 2rem;"></i>
+                    Admin Panel
+                </a>
+            </div>
+            <div class="col-md-3 mb-3">
+                <a href="/api/health/" class="btn btn-outline-success btn-lg w-100">
+                    <i class="fas fa-heartbeat d-block mb-2" style="font-size: 2rem;"></i>
+                    API Health
+                </a>
+            </div>
+            <div class="col-md-3 mb-3">
+                <a href="#" class="btn btn-outline-info btn-lg w-100">
+                    <i class="fas fa-book d-block mb-2" style="font-size: 2rem;"></i>
+                    Documentation
+                </a>
+            </div>
+            <div class="col-md-3 mb-3">
+                <a href="#" class="btn btn-outline-warning btn-lg w-100">
+                    <i class="fas fa-question-circle d-block mb-2" style="font-size: 2rem;"></i>
+                    Support
+                </a>
+            </div>
+        </div>
+    </div>
+</section>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .hero-section {
+        min-height: 60vh;
+        display: flex;
+        align-items: center;
+    }
+    
+    .card {
+        transition: all 0.3s ease;
+    }
+    
+    .card:hover {
+        transform: translateY(-10px);
+        box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+    }
+</style>
+{% endblock %}
