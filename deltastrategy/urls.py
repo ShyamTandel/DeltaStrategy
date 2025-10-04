@@ -22,7 +22,6 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('admin/', admin.site.urls),
     path('api/health/', views.health_check, name='health_check'),
-    # path('api/check-delta/', views.check_delta_apikey, name='check-delta'),
     path('api/start-cycle/', views.StartMonthCycleAPIView.as_view(), name='start-cycle'),
 
 ]
