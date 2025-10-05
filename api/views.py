@@ -1,18 +1,34 @@
+"""
+All API views for Delta Strategy application
+Consolidated from celery_views.py, strategy_views.py and original views.py
+"""
+
+import logging
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Dict, Any
+
 from django.shortcuts import render
-from api.delta_client import DeltaClient
-from api.models import OptionPosition
-from api.utils import find_last_expiry_for_month, parse_expiry, extract_expiry_from_symbol
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
-from datetime import date, datetime
-from decimal import Decimal
-from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
-from django.http import JsonResponse
-from django.views.decorators.csrf import csrf_exempt
-from django.utils import timezone
+
+from api.delta_client import DeltaClient
+from api.models import OptionPosition
+from api.utils import find_last_expiry_for_month, parse_expiry, extract_expiry_from_symbol
+from api.strategy import DeltaStrategy, StrategyConfig
+
+logger = logging.getLogger(__name__)
+
+# Check Celery availability
+try:
+    from celery import current_app
+    CELERY_AVAILABLE = True
+except ImportError:
+    CELERY_AVAILABLE = False
 
 
 def home_view(request):
@@ -64,7 +80,10 @@ class StartMonthCycleAPIView(APIView):
         # Step 1-2: Get option chain and select that month's last expiry
         tickers_resp = client.get_option_chain(underlying=underlying)
         tickers = tickers_resp.get("result", [])
-        last_expiry = find_last_expiry_for_month(tickers, ref)
+        if not reference_date:
+            last_expiry = find_last_expiry_for_month(tickers, ref)
+        else:
+            last_expiry = parse_expiry(reference_date)
         if not last_expiry:
             return Response({"error": "No expiry found for this month"}, status=status.HTTP_404_NOT_FOUND)
 
@@ -285,3 +304,303 @@ class StartMonthCycleAPIView(APIView):
             },
             "actions": actions
         })
+
+
+class StrategyExecuteAPIView(APIView):
+    """
+    POST /api/strategy/
+    Execute new delta strategy with improved implementation
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            underlying = request.data.get("underlying", "BTC")
+            reference_date = request.data.get("reference_date")
+            profit_target = float(request.data.get("profit_target", 50.0))
+            position_size = int(request.data.get("position_size", 2))
+            
+            # Validate inputs
+            if profit_target <= 0 or profit_target > 1000:
+                return Response({
+                    "error": "Profit target must be between 0 and 1000 percent",
+                    "success": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+            if position_size <= 0 or position_size > 100:
+                return Response({
+                    "error": "Position size must be between 1 and 100",
+                    "success": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create strategy config
+            config = StrategyConfig(
+                profit_target_percent=profit_target,
+                position_size=position_size
+            )
+            
+            # Execute strategy
+            strategy = DeltaStrategy(config=config, debug=True)
+            result = strategy.execute_monthly_strategy(underlying, reference_date)
+            
+            return Response(result)
+            
+        except Exception as e:
+            logger.exception("Error executing strategy")
+            return Response({
+                "error": f"Strategy execution failed: {str(e)}",
+                "success": False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class StrategyStatusAPIView(APIView):
+    """
+    GET /api/strategy/status/
+    Get current strategy status and positions
+    """
+    permission_classes = [AllowAny]
+    
+    def get(self, request):
+        try:
+            active_positions = OptionPosition.objects.filter(active=True).order_by('-created_at')
+            
+            if not active_positions.exists():
+                return Response({
+                    "status": "no_active_positions",
+                    "message": "No active strategy positions found",
+                    "positions": []
+                })
+            
+            # Get current market data
+            client = DeltaClient(debug=False)
+            underlying = "BTC"  # Could be made configurable
+            
+            try:
+                tickers_resp = client.get_option_chain(underlying=underlying)
+                tickers = tickers_resp.get("result", [])
+            except Exception as e:
+                tickers = []
+                logger.warning(f"Could not fetch current tickers: {e}")
+            
+            # Build position data
+            positions_data = []
+            total_initial_value = 0
+            total_current_value = 0
+            
+            for pos in active_positions:
+                current_ticker = next(
+                    (t for t in tickers if t.get("symbol") == pos.symbol), 
+                    None
+                )
+                
+                current_price = None
+                if current_ticker:
+                    current_price = float(current_ticker.get("mark_price", 0))
+                
+                initial_price = float(pos.mark_price or 0)
+                position_initial_value = initial_price * pos.size
+                position_current_value = (current_price or initial_price) * pos.size
+                
+                total_initial_value += position_initial_value
+                total_current_value += position_current_value
+                
+                positions_data.append({
+                    'id': pos.id,
+                    'symbol': pos.symbol,
+                    'side': pos.side,
+                    'size': pos.size,
+                    'strike_price': float(pos.strike_price),
+                    'delta': pos.delta,
+                    'expiry_date': pos.expiry_date.isoformat(),
+                    'created_at': pos.created_at.isoformat(),
+                    'initial_price': initial_price,
+                    'current_price': current_price,
+                    'position_pnl': position_initial_value - position_current_value if current_price else None
+                })
+            
+            # Calculate overall performance
+            total_pnl = total_initial_value - total_current_value
+            pnl_percent = (total_pnl / total_initial_value * 100) if total_initial_value > 0 else 0
+            
+            return Response({
+                "status": "active",
+                "positions_count": len(positions_data),
+                "positions": positions_data,
+                "performance": {
+                    "total_initial_value": total_initial_value,
+                    "total_current_value": total_current_value,
+                    "total_pnl": total_pnl,
+                    "pnl_percent": round(pnl_percent, 2)
+                },
+                "timestamp": timezone.now().isoformat()
+            })
+            
+        except Exception as e:
+            logger.exception("Error getting strategy status")
+            return Response({
+                "error": f"Failed to get status: {str(e)}",
+                "success": False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class StrategyCloseAllAPIView(APIView):
+    """
+    POST /api/strategy/close-all/
+    Close all active positions
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            active_positions = OptionPosition.objects.filter(active=True)
+            
+            if not active_positions.exists():
+                return Response({
+                    "message": "No active positions to close",
+                    "success": True,
+                    "closed_count": 0
+                })
+            
+            client = DeltaClient(debug=True)
+            closed_positions = []
+            errors = []
+            
+            for pos in active_positions:
+                try:
+                    close_order = {
+                        "product_id": pos.product_id,
+                        "size": pos.size,
+                        "side": "buy",
+                        "order_type": "market_order"
+                    }
+                    
+                    result = client.place_order(close_order)
+                    pos.active = False
+                    pos.save()
+                    
+                    closed_positions.append({
+                        "symbol": pos.symbol,
+                        "size": pos.size,
+                        "order_id": result.get("result", {}).get("id")
+                    })
+                    
+                except Exception as e:
+                    errors.append(f"Failed to close {pos.symbol}: {str(e)}")
+            
+            return Response({
+                "message": f"Closed {len(closed_positions)} positions",
+                "success": len(errors) == 0,
+                "closed_positions": closed_positions,
+                "errors": errors,
+                "closed_count": len(closed_positions)
+            })
+            
+        except Exception as e:
+            logger.exception("Error closing positions")
+            return Response({
+                "error": f"Failed to close positions: {str(e)}",
+                "success": False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# Celery-integrated APIs (only if Celery is available)
+if CELERY_AVAILABLE:
+    
+    class BackgroundStrategyExecuteAPIView(APIView):
+        """
+        POST /api/strategy/execute-background/
+        Execute strategy as background task
+        """
+        permission_classes = [AllowAny]
+        
+        def post(self, request):
+            try:
+                from deltastrategy.celery import execute_strategy_background_task
+                
+                underlying = request.data.get("underlying", "BTC")
+                reference_date = request.data.get("reference_date")
+                profit_target = float(request.data.get("profit_target", 50.0))
+                position_size = int(request.data.get("position_size", 2))
+                
+                # Queue the strategy execution as a background task
+                task_result = execute_strategy_background_task.delay(underlying, reference_date, profit_target, position_size)
+                
+                return Response({
+                    'success': True,
+                    'message': 'Strategy execution queued',
+                    'task_id': str(task_result.id),
+                    'queued_at': timezone.now().isoformat()
+                })
+                
+            except Exception as e:
+                return Response({
+                    'error': f'Failed to queue strategy: {str(e)}',
+                    'success': False
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    
+    class MonitoringStatusAPIView(APIView):
+        """
+        GET /api/strategy/monitoring/status/
+        Get monitoring status
+        """
+        permission_classes = [AllowAny]
+        
+        def get(self, request):
+            active_positions = OptionPosition.objects.filter(active=True)
+            
+            return Response({
+                'automation_status': 'active' if active_positions.exists() else 'no_positions',
+                'positions_count': active_positions.count(),
+                'monitoring_frequency': '30 seconds',
+                'celery_available': True,
+                'last_check': timezone.now().isoformat()
+            })
+    
+    
+    class ForceMonitorAPIView(APIView):
+        """
+        POST /api/strategy/force-monitor/
+        Manually trigger monitoring
+        """
+        permission_classes = [AllowAny]
+        
+        def post(self, request):
+            try:
+                from api.strategy import monitor_positions
+                result = monitor_positions()
+                return Response({
+                    'success': True,
+                    'message': 'Monitoring task executed',
+                    'result': result,
+                    'executed_at': timezone.now().isoformat()
+                })
+            except Exception as e:
+                return Response({
+                    'error': f'Monitoring failed: {str(e)}',
+                    'success': False
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+else:
+    # Placeholder classes when Celery is not available
+    class BackgroundStrategyExecuteAPIView(APIView):
+        def post(self, request):
+            return Response({
+                'error': 'Celery is not available. Use /api/strategy/ instead.',
+                'success': False
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    
+    class MonitoringStatusAPIView(APIView):
+        def get(self, request):
+            return Response({
+                'error': 'Celery is not available',
+                'celery_available': False
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    
+    class ForceMonitorAPIView(APIView):
+        def post(self, request):
+            return Response({
+                'error': 'Celery is not available',
+                'success': False
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)

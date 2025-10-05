@@ -22,6 +22,17 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('admin/', admin.site.urls),
     path('api/health/', views.health_check, name='health_check'),
+    
+    # Original API (backward compatibility)
     path('api/start-cycle/', views.StartMonthCycleAPIView.as_view(), name='start-cycle'),
-
+    
+    # Main Strategy APIs (all consolidated in views.py)
+    path('api/strategy/', views.StrategyExecuteAPIView.as_view(), name='strategy-execute'),
+    path('api/strategy/status/', views.StrategyStatusAPIView.as_view(), name='strategy-status'),
+    path('api/strategy/close-all/', views.StrategyCloseAllAPIView.as_view(), name='strategy-close-all'),
+    
+    # Background/Celery APIs (work even if Celery not available)
+    path('api/strategy/execute-background/', views.BackgroundStrategyExecuteAPIView.as_view(), name='strategy-background'),
+    path('api/strategy/monitoring/status/', views.MonitoringStatusAPIView.as_view(), name='monitoring-status'),
+    path('api/strategy/force-monitor/', views.ForceMonitorAPIView.as_view(), name='force-monitor'),
 ]

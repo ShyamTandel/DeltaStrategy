@@ -23,10 +23,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-+b#&%tqyy8gpg2y$owz#r$(2jqn*p71*w1@_(4bpm00od7gy+6'
+SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-+b#&%tqyy8gpg2y$owz#r$(2jqn*p71*w1@_(4bpm00od7gy+6')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
 ALLOWED_HOSTS = ['127.0.0.1', 'localhost']
 
@@ -79,14 +79,21 @@ WSGI_APPLICATION = 'deltastrategy.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'deltadb',
-        'USER': 'shyam',
-        'PASSWORD': '123456',
-        'HOST': 'localhost',
-        'PORT': '3306',
+        'ENGINE': os.getenv('DB_ENGINE', 'django.db.backends.mysql'),
+        'NAME': os.getenv('DB_NAME', 'deltadb'),
+        'USER': os.getenv('DB_USER', 'shyam'),
+        'PASSWORD': os.getenv('DB_PASSWORD', '123456'),
+        'HOST': os.getenv('DB_HOST', 'localhost'),
+        'PORT': os.getenv('DB_PORT', '3306'),
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'charset': 'utf8mb4',
+        },
+        'CONN_MAX_AGE': 60,
+        'CONN_HEALTH_CHECKS': True,
     }
 }
 
@@ -126,6 +133,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -165,3 +173,106 @@ CORS_ALLOW_ALL_ORIGINS = True
 DELTA_API_KEY = os.getenv("DELTA_API_KEY")
 DELTA_API_SECRET = os.getenv("DELTA_API_SECRET")
 DELTA_API_BASE = os.getenv("DELTA_API_BASE")
+
+# Celery Configuration
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = 'django-db'  # Store results in Django database
+CELERY_CACHE_BACKEND = 'django-cache'
+
+# Celery task configuration
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TIMEZONE = TIME_ZONE
+CELERY_ENABLE_UTC = True
+
+# Celery Beat Configuration (for scheduled tasks)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Task routing for organized queue management
+CELERY_TASK_ROUTES = {
+    # Monitoring tasks (every 30 seconds)
+    'api.strategy.monitor_strategy_positions_task': {
+        'queue': 'monitoring',
+        'routing_key': 'monitoring.strategy'
+    },
+    # Strategy execution tasks (user-initiated)
+    'api.strategy.execute_strategy_background_task': {
+        'queue': 'strategy', 
+        'routing_key': 'strategy.execute'
+    },
+    # Emergency tasks (highest priority)
+    'api.strategy.emergency_close_all_task': {
+        'queue': 'emergency',
+        'routing_key': 'emergency.close'
+    },
+}
+
+# Worker configuration
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+
+# Task time limits (in seconds)
+CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes
+CELERY_TASK_TIME_LIMIT = 600       # 10 minutes hard limit
+
+# Logging configuration for Celery
+CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(message)s'
+CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
+
+# Add django-celery-beat and django-celery-results to installed apps
+INSTALLED_APPS += [
+    'django_celery_beat',
+    'django_celery_results',
+]
+
+# Logging configuration
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+            'style': '{',
+        },
+        'simple': {
+            'format': '{levelname} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'file': {
+            'level': 'INFO',
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs' / 'deltastrategy.log',
+            'formatter': 'verbose',
+        },
+        'console': {
+            'level': 'DEBUG',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+    },
+    'root': {
+        'handlers': ['console', 'file'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'api': {
+            'handlers': ['console', 'file'],
+            'level': 'DEBUG',
+            'propagate': False,
+        },
+        'celery': {
+            'handlers': ['console', 'file'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
+}
+
+# Create logs directory if it doesn't exist
+import os
+logs_dir = BASE_DIR / 'logs'
+os.makedirs(logs_dir, exist_ok=True)
