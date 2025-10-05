@@ -27,7 +27,8 @@ class DeltaClient:
             raise RuntimeError("Missing DELTA_API_KEY or DELTA_API_SECRET")
 
     def _timestamp(self) -> str:
-        return str(int(time.time()))
+        # Add a small buffer to account for network latency
+        return str(int(time.time()) + 1)
 
     def _full_path(self, path: str) -> str:
         """
@@ -124,63 +125,110 @@ class DeltaClient:
     # -------------------------
     # Authenticated endpoints
     # -------------------------
+    def _make_auth_request(self, method: str, path: str, body: dict = None, query_params: dict = None):
+        """Generic authenticated request method"""
+        full_path = self._full_path(path)
+        url = self.base + full_path
+        headers = self._headers(method, path, body=body, query_params=query_params)
+        
+        if self.debug:
+            print(f"{method} {url}")
+            if body:
+                print(f"BODY: {body}")
+            if query_params:
+                print(f"PARAMS: {query_params}")
+        
+        if method.upper() == "GET":
+            r = requests.get(url, headers=headers, params=query_params)
+        elif method.upper() == "POST":
+            r = requests.post(url, json=body, headers=headers, params=query_params)
+        elif method.upper() == "PUT":
+            r = requests.put(url, json=body, headers=headers, params=query_params)
+        elif method.upper() == "DELETE":
+            r = requests.delete(url, headers=headers, params=query_params)
+        else:
+            raise ValueError(f"Unsupported method: {method}")
+        
+        if r.status_code >= 400:
+            if self.debug:
+                print(f"Response status {r.status_code}, response text:", r.text)
+        
+        r.raise_for_status()
+        return r.json()
+
     def place_order(self, body: dict):
         """
         POST /v2/orders
         Body must contain exactly either product_id or product_symbol (not both).
         """
-        path = self._full_path("/orders")
-        url = self.base + path
-        headers = self._headers("POST", path, body=body)
-        if self.debug:
-            print("POST", url)
-            print("HEADERS:", headers)
-            print("BODY:", body)
-        r = requests.post(url, json=body, headers=headers)
-        # If error, print debug info
-        if r.status_code >= 400:
-            print(f"Response status {r.status_code}, response text:", r.text)
-            if self.debug:
-                print("Request URL:", url)
-                print("Request headers:", headers)
-                print("Request body:", body)
-        r.raise_for_status()
-        return r.json()
+        # Use the same pattern as _make_auth_request for consistency
+        return self._make_auth_request("POST", "/orders", body=body)
 
     def get_positions(self):
-        path = self._full_path("/positions/margined")
-        url = self.base + path
-        headers = self._headers("GET", path)
-        if self.debug:
-            print("GET", url, "HEADERS:", headers)
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        return r.json()
+        """GET /v2/positions/margined"""
+        return self._make_auth_request("GET", "/positions/margined")
 
     def get_account_summary(self):
-        path = "/wallet/balances"   # or /accounts for newer versions — check your API docs
-        method = "GET"
-        ts = self._timestamp()
-        sig = self._sign(method, path, ts)
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "api-key": self.api_key,
-            "signature": sig,
-            "timestamp": ts
-        }
-
+        # Try multiple possible endpoints for account info
+        endpoints = ["/wallet/balances", "/accounts", "/wallet", "/profile"]
+        
+        for endpoint in endpoints:
+            try:
+                path = self._full_path(endpoint)
+                url = self.base + path
+                headers = self._headers("GET", endpoint)
+                
+                if self.debug:
+                    print(f"Trying endpoint: {endpoint}")
+                
+                r = requests.get(url, headers=headers)
+                
+                if r.status_code == 200:
+                    return r.json()
+                elif self.debug:
+                    print(f"Endpoint {endpoint} returned {r.status_code}: {r.text[:200]}")
+                    
+            except Exception as e:
+                if self.debug:
+                    print(f"Error with endpoint {endpoint}: {e}")
+                continue
+        
+        # If all endpoints failed, try the last one and let it raise the error
+        path = self._full_path("/wallet/balances")
         url = self.base + path
+        headers = self._headers("GET", "/wallet/balances")
         r = requests.get(url, headers=headers)
         r.raise_for_status()
         return r.json()
 
     def test_auth(self):
-        path = self._full_path("/wallet/balances")
-        url = self.base + path
-        headers = self._headers("GET", "/wallet/balances")
-        print("Signature test headers:", headers)
-        print("URL:", url)
-        r = requests.get(url, headers=headers)
-        print("Response:", r.status_code, r.text)
+        """Test authentication with multiple possible endpoints"""
+        endpoints = ["/orders", "/positions/margined", "/wallet/balances", "/accounts"]
+        
+        for endpoint in endpoints:
+            try:
+                path = self._full_path(endpoint)
+                url = self.base + path
+                headers = self._headers("GET", endpoint)
+                
+                print(f"Testing endpoint: {endpoint}")
+                print(f"URL: {url}")
+                if self.debug:
+                    print(f"Headers: {headers}")
+                
+                r = requests.get(url, headers=headers)
+                print(f"Response: {r.status_code}")
+                
+                if r.status_code == 200:
+                    print(f"✅ Authentication successful with {endpoint}")
+                    return r.json()
+                elif r.status_code == 401:
+                    print(f"❌ Authentication failed (401) with {endpoint}")
+                else:
+                    print(f"⚠️ Endpoint {endpoint} returned {r.status_code}: {r.text[:100]}")
+                    
+            except Exception as e:
+                print(f"Error testing {endpoint}: {e}")
+        
+        return None
 

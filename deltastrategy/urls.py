@@ -22,6 +22,7 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('admin/', admin.site.urls),
     path('api/health/', views.health_check, name='health_check'),
+    path('api/test-credentials/', views.test_delta_credentials, name='test_credentials'),
     
     # Original API (backward compatibility)
     path('api/start-cycle/', views.StartMonthCycleAPIView.as_view(), name='start-cycle'),
@@ -30,6 +31,7 @@ urlpatterns = [
     path('api/strategy/', views.StrategyExecuteAPIView.as_view(), name='strategy-execute'),
     path('api/strategy/status/', views.StrategyStatusAPIView.as_view(), name='strategy-status'),
     path('api/strategy/close-all/', views.StrategyCloseAllAPIView.as_view(), name='strategy-close-all'),
+    path('api/strategy/execute-full-local/', views.FullLocalStrategyAPIView.as_view(), name='strategy-full-local'),
     
     # Background/Celery APIs (work even if Celery not available)
     path('api/strategy/execute-background/', views.BackgroundStrategyExecuteAPIView.as_view(), name='strategy-background'),
