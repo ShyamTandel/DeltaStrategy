@@ -52,6 +52,51 @@ def health_check(request):
     })
 
 
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def test_delta_credentials(request):
+    """
+    Test Delta Exchange API credentials from within Django
+    """
+    try:
+        from django.conf import settings
+        
+        # Check if credentials are loaded
+        api_key = getattr(settings, 'DELTA_API_KEY', None)
+        api_secret = getattr(settings, 'DELTA_API_SECRET', None)
+        api_base = getattr(settings, 'DELTA_API_BASE', None)
+        
+        if not api_key or not api_secret:
+            return Response({
+                'error': 'API credentials not configured',
+                'api_key_present': bool(api_key),
+                'api_secret_present': bool(api_secret),
+                'api_base': api_base
+            }, status=400)
+        
+        # Test authentication
+        client = DeltaClient(debug=True)
+        
+        # Try to get orders (simplest auth test)
+        result = client._make_auth_request("GET", "/orders")
+        
+        return Response({
+            'success': True,
+            'message': 'Delta API credentials working',
+            'api_key_preview': f"{api_key[:10]}...{api_key[-5:]}",
+            'api_base': api_base,
+            'orders_count': len(result.get('result', [])),
+            'test_timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.exception("Delta credential test failed")
+        return Response({
+            'error': f'Delta API test failed: {str(e)}',
+            'success': False
+        }, status=500)
+
+
 class StartMonthCycleAPIView(APIView):
     """
     POST /api/start-cycle/
@@ -500,6 +545,496 @@ class StrategyCloseAllAPIView(APIView):
             return Response({
                 "error": f"Failed to close positions: {str(e)}",
                 "success": False
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class FullLocalStrategyAPIView(APIView):
+    """
+    POST /api/strategy/execute-full-local/
+    
+    🎯 COMPLETE DELTA STRATEGY EXECUTION - ALL STEPS LOCAL
+    
+    This API executes the ENTIRE delta strategy flow in one call:
+    
+    1. ✅ Find call (0.16-0.22 delta) and put (-0.22 to -0.16 delta) options
+    2. ✅ SELL BOTH OPTIONS (critical requirement - must be both)
+    3. ✅ Enter monitoring loop with 30-second intervals (simulated locally)
+    4. ✅ Apply all rules: profit target, price doubling, strike crossing
+    5. ✅ Close positions when 50% profit target reached
+    6. ✅ Find matching deltas when needed
+    7. ✅ Complete strategy until termination conditions met
+    
+    📊 AUTOMATED RULES APPLIED:
+    - 50% profit target → Close ALL positions
+    - Price doubling → Close cheaper position
+    - Strike crossing prevention → Close latest position
+    - Delta matching → Find and sell matching options
+    
+    🚀 USAGE FROM POSTMAN:
+    POST http://localhost:8000/api/strategy/execute-full-local/
+    Body: {
+        "underlying": "BTC",
+        "reference_date": "2024-10-25",  // optional
+        "profit_target": 50.0,           // optional, default 50%
+        "position_size": 2,              // optional, default 2
+        "max_iterations": 20,            // optional, default 20
+        "monitoring_interval": 5         // optional, default 5 seconds
+    }
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        import time
+        from decimal import Decimal
+        
+        try:
+            # Parse request parameters
+            underlying = request.data.get("underlying", "BTC")
+            reference_date = request.data.get("reference_date")
+            profit_target = float(request.data.get("profit_target", 50.0))
+            position_size = int(request.data.get("position_size", 2))
+            max_iterations = int(request.data.get("max_iterations", 20))
+            monitoring_interval = int(request.data.get("monitoring_interval", 5))
+            
+            # Validation
+            if profit_target <= 0 or profit_target > 1000:
+                return Response({
+                    "error": "Profit target must be between 0 and 1000 percent",
+                    "success": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            if position_size <= 0 or position_size > 100:
+                return Response({
+                    "error": "Position size must be between 1 and 100",
+                    "success": False
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Initialize
+            execution_log = []
+            start_time = datetime.now()
+            
+            def log_action(message):
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                execution_log.append(f"[{timestamp}] {message}")
+                print(f"[FULL-STRATEGY] {message}")
+            
+            log_action(f"🚀 Starting FULL LOCAL Delta Strategy for {underlying}")
+            log_action(f"📊 Config: profit_target={profit_target}%, size={position_size}, max_iter={max_iterations}")
+            
+            # Test credentials first
+            try:
+                from django.conf import settings
+                api_key = getattr(settings, 'DELTA_API_KEY', None)
+                api_secret = getattr(settings, 'DELTA_API_SECRET', None)
+                api_base = getattr(settings, 'DELTA_API_BASE', None)
+                
+                log_action(f"🔐 API Config: key={api_key[:10] if api_key else 'None'}..., base={api_base}")
+                
+                if not api_key or not api_secret:
+                    return Response({
+                        "error": "Delta API credentials not properly configured in Django settings",
+                        "success": False,
+                        "api_key_present": bool(api_key),
+                        "api_secret_present": bool(api_secret),
+                        "execution_log": execution_log
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                
+                # Test authentication before proceeding
+                test_client = DeltaClient(debug=False)
+                test_result = test_client._make_auth_request("GET", "/orders")
+                log_action(f"✅ Credentials verified - found {len(test_result.get('result', []))} existing orders")
+                
+            except Exception as e:
+                log_action(f"❌ Credential verification failed: {str(e)}")
+                return Response({
+                    "error": f"Delta API credential verification failed: {str(e)}",
+                    "success": False,
+                    "execution_log": execution_log
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            client = DeltaClient(debug=True)
+            
+            # STEP 1: Get option chain and find expiry
+            log_action("📈 Fetching option chain...")
+            tickers_resp = client.get_option_chain(underlying=underlying)
+            tickers = tickers_resp.get("result", [])
+            
+            if reference_date:
+                ref_date = datetime.fromisoformat(reference_date).date()
+                last_expiry = parse_expiry(reference_date)
+            else:
+                ref_date = date.today()
+                last_expiry = find_last_expiry_for_month(tickers, ref_date)
+            
+            if not last_expiry:
+                return Response({
+                    "error": "No expiry found for this month",
+                    "success": False,
+                    "execution_log": execution_log
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            expiry_str = last_expiry.strftime("%d-%m-%Y")
+            log_action(f"📅 Using expiry: {expiry_str}")
+            
+            # Get options for specific expiry
+            tickers_resp = client.get_option_chain(underlying=underlying, expiry_date=expiry_str)
+            tickers = tickers_resp.get("result", [])
+            
+            # STEP 2: Find options in delta ranges
+            log_action("🔍 Finding options in delta ranges...")
+            call_candidates = []
+            put_candidates = []
+            
+            for ticker in tickers:
+                greeks = ticker.get("greeks")
+                if not greeks:
+                    continue
+                    
+                try:
+                    delta = float(greeks.get("delta", 0))
+                except (ValueError, TypeError):
+                    continue
+                    
+                symbol = ticker.get("symbol", "")
+                contract_type = ticker.get("contract_type", "").lower()
+                
+                # Identify call options
+                is_call = (contract_type == "call_options" or 
+                          "c-" in symbol.lower() or 
+                          symbol.upper().startswith("C-"))
+                
+                # Identify put options  
+                is_put = (contract_type == "put_options" or 
+                         "p-" in symbol.lower() or 
+                         symbol.upper().startswith("P-"))
+                
+                # Check call delta range (0.16 to 0.22)
+                if is_call and 0.16 <= delta <= 0.22:
+                    call_candidates.append(ticker)
+                    
+                # Check put delta range (-0.22 to -0.16)
+                if is_put and -0.22 <= delta <= -0.16:
+                    put_candidates.append(ticker)
+            
+            if not call_candidates:
+                return Response({
+                    "error": "No call options found in delta range 0.16-0.22",
+                    "success": False,
+                    "execution_log": execution_log
+                }, status=status.HTTP_404_NOT_FOUND)
+                
+            if not put_candidates:
+                return Response({
+                    "error": "No put options found in delta range -0.22 to -0.16",
+                    "success": False,
+                    "execution_log": execution_log
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            log_action(f"✅ Found {len(call_candidates)} call and {len(put_candidates)} put candidates")
+            
+            # STEP 3: Select options with lowest absolute delta
+            def select_lowest_delta(candidates):
+                return min(candidates, key=lambda x: abs(float(x["greeks"].get("delta", 0))))
+            
+            call_to_sell = select_lowest_delta(call_candidates)
+            put_to_sell = select_lowest_delta(put_candidates)
+            
+            log_action(f"📊 Selected call: {call_to_sell['symbol']} (δ={call_to_sell['greeks']['delta']})")
+            log_action(f"📊 Selected put: {put_to_sell['symbol']} (δ={put_to_sell['greeks']['delta']})")
+            
+            # STEP 4: SELL BOTH OPTIONS (CRITICAL REQUIREMENT)
+            def place_sell_order(ticker, size):
+                order_body = {
+                    "product_id": ticker.get("product_id"),
+                    "size": size,
+                    "side": "sell", 
+                    "order_type": "market_order"
+                }
+                return client.place_order(order_body)
+            
+            def save_position(order_response, ticker):
+                result = order_response.get("result", {})
+                expiry_date = extract_expiry_from_symbol(ticker.get("symbol", ""))
+                
+                position = OptionPosition.objects.create(
+                    product_id=ticker.get("product_id"),
+                    symbol=ticker.get("symbol"),
+                    side="sell",
+                    size=position_size,
+                    limit_price=None,
+                    mark_price=Decimal(str(ticker.get("mark_price", 0) or 
+                                         ticker.get("quotes", {}).get("best_bid", 0) or 0)),
+                    strike_price=Decimal(str(ticker.get("strike_price", 0))),
+                    delta=float(ticker.get("greeks", {}).get("delta", 0)),
+                    expiry_date=expiry_date,
+                    remote_order_id=result.get("id"),
+                    active=True
+                )
+                return position
+            
+            log_action("💰 Selling call option...")
+            call_order = place_sell_order(call_to_sell, position_size)
+            call_position = save_position(call_order, call_to_sell)
+            
+            log_action("💰 Selling put option...")
+            put_order = place_sell_order(put_to_sell, position_size)
+            put_position = save_position(put_order, put_to_sell)
+            
+            log_action(f"✅ Successfully sold both options!")
+            log_action(f"   📞 Call: {call_position.symbol} @ ${call_position.mark_price}")
+            log_action(f"   📞 Put: {put_position.symbol} @ ${put_position.mark_price}")
+            
+            # STEP 5: MONITORING LOOP - LOCAL EXECUTION
+            log_action(f"🔄 Starting monitoring loop (max {max_iterations} iterations)")
+            
+            iteration = 0
+            while iteration < max_iterations:
+                iteration += 1
+                log_action(f"🔍 Monitoring iteration {iteration}/{max_iterations}")
+                
+                # Wait for monitoring interval
+                if iteration > 1:  # Don't wait on first iteration
+                    log_action(f"⏱️ Waiting {monitoring_interval} seconds...")
+                    time.sleep(monitoring_interval)
+                
+                # Refresh market data
+                try:
+                    tickers_resp = client.get_option_chain(underlying=underlying, expiry_date=expiry_str)
+                    tickers = tickers_resp.get("result", [])
+                except Exception as e:
+                    log_action(f"⚠️ Failed to refresh market data: {e}")
+                    continue
+                
+                # Get current active positions
+                active_positions = list(OptionPosition.objects.filter(active=True).order_by('created_at'))
+                
+                if len(active_positions) == 0:
+                    log_action("✅ No active positions remaining - strategy complete!")
+                    break
+                
+                # Get current prices
+                current_prices = {}
+                for pos in active_positions:
+                    ticker = next((t for t in tickers if t.get("symbol") == pos.symbol), None)
+                    if ticker:
+                        current_prices[pos.id] = float(ticker.get("mark_price", 0) or 0)
+                    else:
+                        current_prices[pos.id] = float(pos.mark_price or 0)
+                
+                log_action(f"💹 Current prices: {[(pos.symbol, f'${current_prices.get(pos.id, 0):.4f}') for pos in active_positions]}")
+                
+                # RULE 1: Check 50% profit target
+                def calculate_profit_percent(positions, prices):
+                    if not positions:
+                        return 0.0
+                    
+                    total_initial = sum(float(pos.mark_price or 0) * pos.size for pos in positions)
+                    total_current = sum(prices.get(pos.id, float(pos.mark_price or 0)) * pos.size for pos in positions)
+                    
+                    if total_initial == 0:
+                        return 0.0
+                    
+                    # For sold positions: profit = initial - current
+                    profit_percent = ((total_initial - total_current) / total_initial) * 100
+                    return profit_percent
+                
+                current_profit = calculate_profit_percent(active_positions, current_prices)
+                log_action(f"📊 Current profit: {current_profit:.2f}% (target: {profit_target}%)")
+                
+                if current_profit >= profit_target:
+                    log_action(f"🎯 PROFIT TARGET REACHED! Closing all positions...")
+                    
+                    def place_buy_order(position):
+                        order_body = {
+                            "product_id": position.product_id,
+                            "size": position.size,
+                            "side": "buy",
+                            "order_type": "market_order"
+                        }
+                        return client.place_order(order_body)
+                    
+                    closed_count = 0
+                    for pos in active_positions:
+                        try:
+                            close_order = place_buy_order(pos)
+                            pos.active = False
+                            pos.save()
+                            closed_count += 1
+                            log_action(f"   ✅ Closed {pos.symbol}")
+                        except Exception as e:
+                            log_action(f"   ❌ Failed to close {pos.symbol}: {e}")
+                    
+                    log_action(f"🏁 Strategy completed! Closed {closed_count} positions at {current_profit:.2f}% profit")
+                    break
+                
+                # RULE 2: Handle single position case
+                if len(active_positions) == 1:
+                    log_action("🔍 Only one position active - searching for matching option...")
+                    remaining_pos = active_positions[0]
+                    target_delta_abs = abs(remaining_pos.delta)
+                    
+                    # Find matching option on opposite side
+                    matching_option = None
+                    tolerance = 0.03
+                    
+                    if remaining_pos.delta > 0:  # Remaining is call, find matching put
+                        for ticker in tickers:
+                            if ("P-" in ticker.get("symbol", "").upper() or 
+                                ticker.get("contract_type") == "put_options"):
+                                try:
+                                    delta_abs = abs(float(ticker["greeks"]["delta"]))
+                                    if target_delta_abs - tolerance <= delta_abs <= target_delta_abs + tolerance:
+                                        if not matching_option or abs(delta_abs - target_delta_abs) < abs(abs(float(matching_option["greeks"]["delta"])) - target_delta_abs):
+                                            matching_option = ticker
+                                except (ValueError, TypeError, KeyError):
+                                    continue
+                    else:  # Remaining is put, find matching call
+                        for ticker in tickers:
+                            if ("C-" in ticker.get("symbol", "").upper() or 
+                                ticker.get("contract_type") == "call_options"):
+                                try:
+                                    delta = float(ticker["greeks"]["delta"])
+                                    if target_delta_abs - tolerance <= delta <= target_delta_abs + tolerance:
+                                        if not matching_option or abs(delta - target_delta_abs) < abs(float(matching_option["greeks"]["delta"]) - target_delta_abs):
+                                            matching_option = ticker
+                                except (ValueError, TypeError, KeyError):
+                                    continue
+                    
+                    if matching_option:
+                        try:
+                            log_action(f"💰 Selling matching option: {matching_option['symbol']} (δ={matching_option['greeks']['delta']})")
+                            order = place_sell_order(matching_option, position_size)
+                            new_position = save_position(order, matching_option)
+                            log_action(f"   ✅ Successfully sold matching option!")
+                        except Exception as e:
+                            log_action(f"   ❌ Failed to sell matching option: {e}")
+                    else:
+                        log_action("   ⚠️ No matching option found within tolerance")
+                
+                # RULE 3: Handle two+ positions case - price doubling
+                elif len(active_positions) >= 2:
+                    pos1, pos2 = active_positions[0], active_positions[1]
+                    price1 = current_prices.get(pos1.id, 0)
+                    price2 = current_prices.get(pos2.id, 0)
+                    
+                    position_closed = False
+                    
+                    if price1 >= 2 * price2 and price2 > 0:
+                        log_action(f"📈 Price doubled! Closing cheaper position {pos2.symbol} (${price2:.4f} vs ${price1:.4f})")
+                        try:
+                            close_order = place_buy_order(pos2)
+                            pos2.active = False
+                            pos2.save()
+                            log_action(f"   ✅ Closed {pos2.symbol}")
+                            position_closed = True
+                        except Exception as e:
+                            log_action(f"   ❌ Failed to close {pos2.symbol}: {e}")
+                            
+                    elif price2 >= 2 * price1 and price1 > 0:
+                        log_action(f"📈 Price doubled! Closing cheaper position {pos1.symbol} (${price1:.4f} vs ${price2:.4f})")
+                        try:
+                            close_order = place_buy_order(pos1)
+                            pos1.active = False
+                            pos1.save()
+                            log_action(f"   ✅ Closed {pos1.symbol}")
+                            position_closed = True
+                        except Exception as e:
+                            log_action(f"   ❌ Failed to close {pos1.symbol}: {e}")
+                    
+                    # RULE 4: Check strike crossing prevention
+                    if not position_closed:
+                        active_pos_fresh = list(OptionPosition.objects.filter(active=True).order_by('created_at'))
+                        if len(active_pos_fresh) >= 2:
+                            def check_strike_crossing(positions):
+                                call_pos = None
+                                put_pos = None
+                                
+                                for pos in positions:
+                                    if pos.symbol.upper().startswith("C-") or pos.delta > 0:
+                                        call_pos = pos
+                                    elif pos.symbol.upper().startswith("P-") or pos.delta < 0:
+                                        put_pos = pos
+                                
+                                if call_pos and put_pos:
+                                    call_strike = float(call_pos.strike_price)
+                                    put_strike = float(put_pos.strike_price)
+                                    return call_strike < put_strike  # Strikes cross if call < put
+                                
+                                return False
+                            
+                            if check_strike_crossing(active_pos_fresh):
+                                to_close = active_pos_fresh[-1]  # Close most recent
+                                log_action(f"⚠️ Strike crossing detected! Closing {to_close.symbol}")
+                                try:
+                                    close_order = place_buy_order(to_close)
+                                    to_close.active = False
+                                    to_close.save()
+                                    log_action(f"   ✅ Closed {to_close.symbol} to prevent crossing")
+                                except Exception as e:
+                                    log_action(f"   ❌ Failed to close {to_close.symbol}: {e}")
+                
+                # RULE 5: Check termination condition (strikes match)
+                active_positions_check = list(OptionPosition.objects.filter(active=True))
+                if len(active_positions_check) == 2:
+                    strike1 = float(active_positions_check[0].strike_price)
+                    strike2 = float(active_positions_check[1].strike_price)
+                    
+                    if abs(strike1 - strike2) < 0.01:
+                        log_action(f"🎯 Strikes matched! ({strike1} ≈ {strike2}) - Waiting for profit target...")
+            
+            # Final status
+            final_positions = list(OptionPosition.objects.filter(active=True))
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            
+            if len(final_positions) == 0:
+                final_status = "completed_successfully"
+                final_message = f"Strategy completed successfully! All positions closed."
+            else:
+                final_status = "active_positions_remaining"
+                final_message = f"Strategy monitoring completed. {len(final_positions)} positions still active."
+            
+            log_action(f"🏁 Strategy execution finished in {duration:.1f} seconds")
+            log_action(f"📊 Final status: {final_message}")
+            
+            return Response({
+                "success": True,
+                "status": final_status,
+                "message": final_message,
+                "execution_summary": {
+                    "underlying": underlying,
+                    "expiry": expiry_str,
+                    "profit_target": profit_target,
+                    "position_size": position_size,
+                    "iterations_completed": iteration,
+                    "max_iterations": max_iterations,
+                    "duration_seconds": round(duration, 1),
+                    "active_positions_remaining": len(final_positions)
+                },
+                "initial_positions": {
+                    "call": {
+                        "symbol": call_position.symbol,
+                        "delta": call_position.delta,
+                        "strike": float(call_position.strike_price),
+                        "price": float(call_position.mark_price)
+                    },
+                    "put": {
+                        "symbol": put_position.symbol,
+                        "delta": put_position.delta,
+                        "strike": float(put_position.strike_price),
+                        "price": float(put_position.mark_price)
+                    }
+                },
+                "execution_log": execution_log,
+                "timestamp": end_time.isoformat()
+            })
+            
+        except Exception as e:
+            logger.exception("Error in full local strategy execution")
+            return Response({
+                "error": f"Strategy execution failed: {str(e)}",
+                "success": False,
+                "execution_log": execution_log if 'execution_log' in locals() else []
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
