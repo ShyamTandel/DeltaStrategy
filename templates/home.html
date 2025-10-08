@@ -120,6 +120,92 @@
     </div>
 </section>
 
+<!-- Monthly Strategy Section -->
+<section class="py-5 bg-gradient" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+    <div class="container">
+        <div class="row text-center text-white">
+            <div class="col-12 mb-4">
+                <h2 class="display-6 fw-bold mb-3">🎯 Monthly Delta Strategy</h2>
+                <p class="lead mb-4">Automated options strategy with profit target monitoring</p>
+            </div>
+            
+            <div class="col-lg-8 mx-auto">
+                <div class="card shadow-lg border-0" style="backdrop-filter: blur(10px); background: rgba(255,255,255,0.1);">
+                    <div class="card-body p-4">
+                        <div class="row align-items-center">
+                            <div class="col-md-8 text-start">
+                                <h5 class="text-white mb-3">
+                                    <i class="fas fa-rocket me-2"></i>Start Monthly Options Cycle
+                                </h5>
+                                <ul class="text-white-50 mb-3" style="font-size: 0.9rem;">
+                                    <li>Sells call (δ 0.16-0.22) + put (δ -0.22 to -0.16) options</li>
+                                    <li>Monitors every 30 seconds for profit target</li>
+                                    <li>Auto-closes when target reached or at expiry</li>
+                                    <li>Tracks realized + unrealized PnL</li>
+                                </ul>
+                            </div>
+                            <div class="col-md-4">
+                                <button 
+                                    id="startMonthlyStrategyBtn" 
+                                    class="btn btn-warning btn-lg fw-bold shadow-lg"
+                                    onclick="startMonthlyStrategy()"
+                                    style="background: linear-gradient(45deg, #FFD700, #FFA500); border: none;">
+                                    <i class="fas fa-play-circle me-2"></i>
+                                    Start Strategy
+                                </button>
+                            </div>
+                        </div>
+                        
+                        <!-- Status Display -->
+                        <div id="strategyStatus" class="mt-3" style="display: none;">
+                            <div class="alert alert-info border-0" style="background: rgba(0, 0, 0, 0.2);">
+                                <div id="statusMessage" class="text-white"></div>
+                            </div>
+                        </div>
+                        
+                        <!-- Quick Stats -->
+                        <div class="row mt-4 text-center">
+                            <div class="col-md-4">
+                                <div class="p-3 rounded" style="background: rgba(0, 0, 0, 0.1);">
+                                    <h6 class="text-white mb-1">Current Cycle</h6>
+                                    <span id="currentCycle" class="text-warning fw-bold">Loading...</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-3 rounded" style="background: rgba(0, 0, 0, 0.1);">
+                                    <h6 class="text-white mb-1">Active Positions</h6>
+                                    <span id="activePositions" class="text-warning fw-bold">Loading...</span>
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <div class="p-3 rounded" style="background: rgba(0, 0, 0, 0.1);">
+                                    <h6 class="text-white mb-1">Total PnL</h6>
+                                    <span id="totalPnL" class="text-warning fw-bold">Loading...</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Quick Links -->
+            <div class="col-12 mt-4">
+                <div class="d-flex justify-content-center gap-3 flex-wrap">
+                    <a href="/monitoring/" class="btn btn-outline-light">
+                        <i class="fas fa-chart-line me-2"></i>Monitoring Dashboard
+                    </a>
+                    <a href="/api/monthly-strategy/status/" class="btn btn-outline-light">
+                        <i class="fas fa-info-circle me-2"></i>Strategy Status API
+                    </a>
+                    <button class="btn btn-outline-light" onclick="loadStrategyStatus()">
+                        <i class="fas fa-sync-alt me-2"></i>Refresh Status
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
 <!-- Quick Actions -->
 <section class="py-5">
     <div class="container">
@@ -140,15 +226,15 @@
                 </a>
             </div>
             <div class="col-md-3 mb-3">
-                <a href="#" class="btn btn-outline-info btn-lg w-100">
-                    <i class="fas fa-book d-block mb-2" style="font-size: 2rem;"></i>
-                    Documentation
+                <a href="/monitoring/" class="btn btn-outline-info btn-lg w-100">
+                    <i class="fas fa-chart-line d-block mb-2" style="font-size: 2rem;"></i>
+                    Monitoring
                 </a>
             </div>
             <div class="col-md-3 mb-3">
-                <a href="#" class="btn btn-outline-warning btn-lg w-100">
-                    <i class="fas fa-question-circle d-block mb-2" style="font-size: 2rem;"></i>
-                    Support
+                <a href="/api/monthly-strategy/status/" class="btn btn-outline-warning btn-lg w-100">
+                    <i class="fas fa-cogs d-block mb-2" style="font-size: 2rem;"></i>
+                    Strategy API
                 </a>
             </div>
         </div>
@@ -172,5 +258,161 @@
         transform: translateY(-10px);
         box-shadow: 0 8px 25px rgba(0,0,0,0.15);
     }
+    
+    .bg-gradient {
+        position: relative;
+        overflow: hidden;
+    }
+    
+    .bg-gradient::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><defs><pattern id="grain" width="100" height="100" patternUnits="userSpaceOnUse"><circle cx="50" cy="50" r="1" fill="white" opacity="0.1"/></pattern></defs><rect width="100%" height="100%" fill="url(%23grain)"/></svg>');
+        pointer-events: none;
+    }
 </style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Monthly Strategy JavaScript Functions
+let isLoading = false;
+
+async function startMonthlyStrategy() {
+    if (isLoading) return;
+    
+    const btn = document.getElementById('startMonthlyStrategyBtn');
+    const statusDiv = document.getElementById('strategyStatus');
+    const statusMessage = document.getElementById('statusMessage');
+    
+    // Update button state
+    isLoading = true;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Starting...';
+    
+    try {
+        const response = await fetch('/api/monthly-strategy/start/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': getCookie('csrftoken')
+            },
+            body: JSON.stringify({
+                'force_start': true,
+                'underlying': 'BTC'
+            })
+        });
+        
+        const data = await response.json();
+        
+        // Show status
+        statusDiv.style.display = 'block';
+        
+        if (data.success) {
+            statusMessage.innerHTML = `
+                <i class="fas fa-check-circle me-2"></i>
+                <strong>Success!</strong> ${data.message || 'Monthly strategy started successfully'}
+                ${data.data && data.data.positions ? `
+                    <br><small>
+                        📞 Call: ${data.data.positions.call.symbol} (δ=${data.data.positions.call.delta})<br>
+                        📞 Put: ${data.data.positions.put.symbol} (δ=${data.data.positions.put.delta})
+                    </small>
+                ` : ''}
+            `;
+            statusDiv.className = 'mt-3';
+            statusDiv.firstElementChild.className = 'alert alert-success border-0';
+            
+            // Refresh status after successful start
+            setTimeout(() => loadStrategyStatus(), 2000);
+            
+        } else {
+            statusMessage.innerHTML = `
+                <i class="fas fa-exclamation-triangle me-2"></i>
+                <strong>Notice:</strong> ${data.message || 'Strategy not started'}
+            `;
+            statusDiv.className = 'mt-3';
+            statusDiv.firstElementChild.className = 'alert alert-warning border-0';
+        }
+        
+    } catch (error) {
+        console.error('Error starting strategy:', error);
+        statusDiv.style.display = 'block';
+        statusMessage.innerHTML = `
+            <i class="fas fa-times-circle me-2"></i>
+            <strong>Error:</strong> Failed to start strategy. Please check if the server is running.
+        `;
+        statusDiv.className = 'mt-3';
+        statusDiv.firstElementChild.className = 'alert alert-danger border-0';
+        
+    } finally {
+        // Reset button state
+        isLoading = false;
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-play-circle me-2"></i>Start Strategy';
+    }
+}
+
+async function loadStrategyStatus() {
+    const currentCycleEl = document.getElementById('currentCycle');
+    const activePositionsEl = document.getElementById('activePositions');
+    const totalPnLEl = document.getElementById('totalPnL');
+    
+    // Show loading state
+    currentCycleEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    activePositionsEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    totalPnLEl.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
+    
+    try {
+        const response = await fetch('/api/monthly-strategy/status/');
+        const data = await response.json();
+        
+        if (data.success) {
+            currentCycleEl.textContent = data.cycle_id || '2025-10';
+            activePositionsEl.textContent = data.status?.active_positions || '0';
+            
+            const totalPnL = data.pnl_summary?.total_pnl || 0;
+            totalPnLEl.textContent = `$${totalPnL.toFixed(2)}`;
+            totalPnLEl.className = `fw-bold ${totalPnL >= 0 ? 'text-success' : 'text-danger'}`;
+        } else {
+            currentCycleEl.textContent = 'Error';
+            activePositionsEl.textContent = 'Error';
+            totalPnLEl.textContent = 'Error';
+        }
+        
+    } catch (error) {
+        console.error('Error loading status:', error);
+        currentCycleEl.textContent = 'N/A';
+        activePositionsEl.textContent = 'N/A';
+        totalPnLEl.textContent = 'N/A';
+    }
+}
+
+// Helper function to get CSRF token
+function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+// Load status when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    loadStrategyStatus();
+    
+    // Auto-refresh status every 30 seconds
+    setInterval(loadStrategyStatus, 30000);
+});
+</script>
 {% endblock %}

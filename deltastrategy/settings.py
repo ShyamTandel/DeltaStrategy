@@ -247,6 +247,7 @@ LOGGING = {
             'class': 'logging.FileHandler',
             'filename': BASE_DIR / 'logs' / 'deltastrategy.log',
             'formatter': 'verbose',
+            'encoding': 'utf-8',  # Fix Unicode encoding issues
         },
         'console': {
             'level': 'DEBUG',

@@ -1139,3 +1139,21 @@ else:
                 'error': 'Celery is not available',
                 'success': False
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+# Import monitoring views from monitoring_views.py
+from api.monitoring_views import (
+    api_status, 
+    trigger_manual_check, 
+    get_task_result, 
+    monitoring_dashboard, 
+    control_monitoring
+)
+
+# Import monthly strategy views
+from api.monthly_strategy_views import (
+    MonthlyStrategyStartAPIView,
+    MonthlyStrategyStatusAPIView,
+    MonthlyStrategyAdjustAPIView,
+    MonthlyStrategyCloseAllAPIView
+)

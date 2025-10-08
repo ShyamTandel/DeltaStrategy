@@ -37,4 +37,17 @@ urlpatterns = [
     path('api/strategy/execute-background/', views.BackgroundStrategyExecuteAPIView.as_view(), name='strategy-background'),
     path('api/strategy/monitoring/status/', views.MonitoringStatusAPIView.as_view(), name='monitoring-status'),
     path('api/strategy/force-monitor/', views.ForceMonitorAPIView.as_view(), name='force-monitor'),
+    
+    # Monitoring Dashboard APIs
+    path('api/monitoring/status/', views.api_status, name='api-status'),
+    path('api/monitoring/trigger/', views.trigger_manual_check, name='trigger-manual-check'),
+    path('api/monitoring/result/<str:task_id>/', views.get_task_result, name='get-task-result'),
+    path('api/monitoring/control/', views.control_monitoring, name='control-monitoring'),
+    path('monitoring/', views.monitoring_dashboard, name='monitoring-dashboard'),
+    
+    # Monthly Strategy APIs
+    path('api/monthly-strategy/start/', views.MonthlyStrategyStartAPIView.as_view(), name='monthly-strategy-start'),
+    path('api/monthly-strategy/status/', views.MonthlyStrategyStatusAPIView.as_view(), name='monthly-strategy-status'),
+    path('api/monthly-strategy/adjust/', views.MonthlyStrategyAdjustAPIView.as_view(), name='monthly-strategy-adjust'),
+    path('api/monthly-strategy/close-all/', views.MonthlyStrategyCloseAllAPIView.as_view(), name='monthly-strategy-close-all'),
 ]

@@ -22,13 +22,72 @@ class DeltaClient:
         self.api_secret = api_secret or API_SECRET
         self.base = (base or BASE).rstrip('/')
         self.debug = debug
+        self._server_offset = None  # Will be calculated on first auth error
 
         if not self.api_key or not self.api_secret:
             raise RuntimeError("Missing DELTA_API_KEY or DELTA_API_SECRET")
 
+    def _get_server_time_offset(self):
+        """
+        Get the time offset between local and server time by making a test request
+        and parsing the error response if it contains timing information.
+        """
+        if self._server_offset is not None:
+            return self._server_offset
+            
+        # Make a test request to get server time from error response
+        try:
+            test_timestamp = str(int(time.time()))
+            test_sig = self._sign("GET", "/orders", test_timestamp)
+            headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "api-key": self.api_key,
+                "signature": test_sig,
+                "timestamp": test_timestamp,
+                "User-Agent": "django-delta-bot/1.0"
+            }
+            
+            response = requests.get(f"{self.base}/v2/orders", headers=headers, timeout=5)
+            
+            if response.status_code == 401:
+                try:
+                    error_data = response.json()
+                    if (error_data.get('error', {}).get('code') == 'expired_signature' and
+                        'context' in error_data['error']):
+                        
+                        context = error_data['error']['context']
+                        server_time = context.get('server_time')
+                        request_time = context.get('request_time')
+                        
+                        if server_time and request_time:
+                            self._server_offset = server_time - request_time
+                            if self.debug:
+                                print(f"🕐 Detected server time offset: {self._server_offset} seconds")
+                            return self._server_offset
+                except:
+                    pass
+            
+        except:
+            pass
+            
+        # Fallback to known offset from your error logs
+        self._server_offset = 19800  # 5.5 hours based on your logs
+        if self.debug:
+            print(f"🕐 Using fallback server time offset: {self._server_offset} seconds")
+        return self._server_offset
+
     def _timestamp(self) -> str:
-        # Add a small buffer to account for network latency
-        return str(int(time.time()) + 1)
+        # Use standard UTC timestamp - Delta Exchange API accepts UTC timestamps
+        # The server processes options at IST times but API signatures use UTC
+        utc_timestamp = int(time.time())
+        
+        if self.debug:
+            import datetime
+            utc_dt = datetime.datetime.fromtimestamp(utc_timestamp, tz=datetime.timezone.utc)
+            print(f"🕐 UTC timestamp: {utc_timestamp} ({utc_dt.strftime('%Y-%m-%d %H:%M:%S UTC')})")
+            
+        return str(utc_timestamp)
 
     def _full_path(self, path: str) -> str:
         """
@@ -231,7 +290,7 @@ class DeltaClient:
             }
             
             if target_achieved:
-                print(f"🎯 Target achieved! Total PnL: {total_pnl} >= Target: {target_profit}")
+                print(f"[TARGET] Target achieved! Total PnL: {total_pnl} >= Target: {target_profit}")
                 print("Closing all positions...")
                 
                 # Close all positions
