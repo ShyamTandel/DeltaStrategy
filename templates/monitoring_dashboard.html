@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delta Strategy Monitoring Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .status-active { color: #28a745; }
+        .status-inactive { color: #dc3545; }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-warning { background: #ffc107; color: black; }
+        .log-container {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+        }
+        .input-group {
+            margin: 10px 0;
+        }
+        .input-group label {
+            display: inline-block;
+            width: 150px;
+        }
+        .input-group input {
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Delta Strategy Monitoring Dashboard</h1>
+        
+        <!-- Status Card -->
+        <div class="card">
+            <h2>📊 Monitoring Status</h2>
+            <div id="status-info">Loading...</div>
+            <button class="btn btn-primary" onclick="refreshStatus()">🔄 Refresh Status</button>
+            <button class="btn btn-success" onclick="controlMonitoring('enable')">✅ Enable Monitoring</button>
+            <button class="btn btn-danger" onclick="controlMonitoring('disable')">❌ Disable Monitoring</button>
+        </div>
+        
+        <!-- Manual Controls -->
+        <div class="card">
+            <h2>🎮 Manual Controls</h2>
+            <div class="input-group">
+                <label for="target-profit">Target Profit:</label>
+                <input type="number" id="target-profit" value="1000.0" step="0.01">
+            </div>
+            <button class="btn btn-warning" onclick="triggerManualCheck()">🎯 Run Manual Target Check</button>
+            
+            <div id="manual-result" style="margin-top: 15px;"></div>
+        </div>
+        
+        <!-- Logs -->
+        <div class="card">
+            <h2>📝 Recent Activity</h2>
+            <div class="log-container" id="logs">
+                <div>Logs will appear here when monitoring starts...</div>
+            </div>
+            <button class="btn btn-primary" onclick="clearLogs()">🗑️ Clear Logs</button>
+        </div>
+    </div>
+
+    <script>
+        let logs = [];
+        
+        function addLog(message, type = 'info') {
+            const timestamp = new Date().toLocaleString();
+            const logEntry = `[${timestamp}] ${message}`;
+            logs.unshift(logEntry);
+            
+            // Keep only last 50 logs
+            if (logs.length > 50) logs = logs.slice(0, 50);
+            
+            updateLogsDisplay();
+        }
+        
+        function updateLogsDisplay() {
+            const logsContainer = document.getElementById('logs');
+            logsContainer.innerHTML = logs.join('\\n');
+            logsContainer.scrollTop = 0;
+        }
+        
+        function clearLogs() {
+            logs = [];
+            updateLogsDisplay();
+        }
+        
+        async function refreshStatus() {
+            try {
+                addLog('🔄 Refreshing status...');
+                const response = await fetch('/api/monitoring/status/');
+                const data = await response.json();
+                
+                let statusHtml = `<p><strong>Last Updated:</strong> ${new Date(data.timestamp).toLocaleString()}</p>`;
+                
+                if (data.periodic_tasks && data.periodic_tasks.length > 0) {
+                    statusHtml += '<h3>Periodic Tasks:</h3><ul>';
+                    
+                    data.periodic_tasks.forEach(task => {
+                        const statusClass = task.enabled ? 'status-active' : 'status-inactive';
+                        const statusText = task.enabled ? '🟢 Active' : '🔴 Inactive';
+                        
+                        statusHtml += `
+                            <li>
+                                <strong>${task.name}</strong> 
+                                <span class="${statusClass}">${statusText}</span><br>
+                                <small>Last run: ${task.last_run_at ? new Date(task.last_run_at).toLocaleString() : 'Never'}</small><br>
+                                <small>Total runs: ${task.total_run_count}</small>
+                            </li>
+                        `;
+                    });
+                    statusHtml += '</ul>';
+                } else {
+                    statusHtml += '<p>⚠️ No periodic tasks found. Run setup command first.</p>';
+                }
+                
+                document.getElementById('status-info').innerHTML = statusHtml;
+                addLog('✅ Status refreshed successfully');
+                
+            } catch (error) {
+                addLog(`❌ Error refreshing status: ${error.message}`);
+                document.getElementById('status-info').innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+            }
+        }
+        
+        async function controlMonitoring(action) {
+            try {
+                addLog(`${action === 'enable' ? '▶️' : '⏸️'} ${action === 'enable' ? 'Enabling' : 'Disabling'} monitoring...`);
+                
+                const response = await fetch('/api/monitoring/control/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ action })
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    addLog(`✅ ${data.message}`);
+                    refreshStatus(); // Refresh to show updated status
+                } else {
+                    addLog(`❌ Error: ${data.error || 'Unknown error'}`);
+                }
+                
+            } catch (error) {
+                addLog(`❌ Error controlling monitoring: ${error.message}`);
+            }
+        }
+        
+        async function triggerManualCheck() {
+            try {
+                const targetProfit = document.getElementById('target-profit').value;
+                addLog(`🎯 Triggering manual check with target profit: ${targetProfit}`);
+                
+                const response = await fetch('/api/monitoring/trigger/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ target_profit: parseFloat(targetProfit) })
+                });
+                
+                const data = await response.json();
+                
+                if (data.task_id) {
+                    addLog(`✅ Manual check triggered. Task ID: ${data.task_id}`);
+                    
+                    // Show task info
+                    document.getElementById('manual-result').innerHTML = `
+                        <div style="background: #e7f3ff; padding: 10px; border-radius: 4px;">
+                            <strong>Task ID:</strong> ${data.task_id}<br>
+                            <strong>Target Profit:</strong> $${data.target_profit}<br>
+                            <strong>Status:</strong> ${data.status}
+                        </div>
+                    `;
+                    
+                    // Check result after 3 seconds
+                    setTimeout(() => checkTaskResult(data.task_id), 3000);
+                } else {
+                    addLog(`❌ Error triggering manual check: ${data.error || 'Unknown error'}`);
+                }
+                
+            } catch (error) {
+                addLog(`❌ Error triggering manual check: ${error.message}`);
+            }
+        }
+        
+        async function checkTaskResult(taskId) {
+            try {
+                const response = await fetch(`/api/monitoring/result/${taskId}/`);
+                const data = await response.json();
+                
+                addLog(`📋 Task ${taskId} status: ${data.status}`);
+                
+                if (data.status === 'SUCCESS' && data.result) {
+                    const result = data.result;
+                    addLog(`📊 Manual check completed: ${result.status}`);
+                    
+                    if (result.result && result.result.target_achieved) {
+                        addLog(`🎯 TARGET ACHIEVED! Positions may have been closed.`);
+                    }
+                } else if (data.status === 'FAILURE') {
+                    addLog(`❌ Task failed: ${JSON.stringify(data.result)}`);
+                }
+                
+            } catch (error) {
+                addLog(`❌ Error checking task result: ${error.message}`);
+            }
+        }
+        
+        // Auto-refresh status every 30 seconds
+        setInterval(refreshStatus, 30000);
+        
+        // Initial load
+        refreshStatus();
+        addLog('🚀 Dashboard initialized');
+    </script>
+</body>
+</html>
