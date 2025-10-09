@@ -18,8 +18,7 @@ from rest_framework.permissions import AllowAny
 
 from api.delta_client import DeltaClient
 from api.models import OptionPosition
-from api.utils import find_last_expiry_for_month, parse_expiry, extract_expiry_from_symbol
-from api.strategy import DeltaStrategy, StrategyConfig
+
 
 logger = logging.getLogger(__name__)
 

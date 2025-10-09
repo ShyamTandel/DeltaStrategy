@@ -23,17 +23,11 @@ app.autodiscover_tasks()
 # Celery Beat Schedule for automatic background execution
 app.conf.beat_schedule = {
     # Monitor active positions every 30 seconds automatically
-    'monitor-strategy-positions': {
-        'task': 'api.strategy.monitor_strategy_positions_task',
+    'monitor-monthly-strategy': {
+        'task': 'api.strategy.monitor_monthly_strategy',
         'schedule': 30.0,  # Every 30 seconds
         'options': {
             'expires': 25.0,  # Expire task if not executed within 25 seconds
-            'retry': True,
-            'retry_policy': {
-                'max_retries': 3,
-                'interval_start': 1,
-                'interval_step': 1,
-            }
         }
     },
 }
@@ -61,41 +55,14 @@ def debug_task(self):
     print(f'Request: {self.request!r}')
 
 
-@app.task(bind=True, name='api.strategy.monitor_strategy_positions_task')
-def monitor_strategy_positions_task(self):
+@app.task(bind=True, name='api.strategy.monitor_monthly_strategy')
+def monitor_monthly_strategy_task(self):
     """
-    Celery task to monitor active strategy positions every 30 seconds
+    Celery task to monitor monthly strategy every 30 seconds
     
-    This task:
-    - Checks current prices of active positions
-    - Monitors for price doubling conditions  
-    - Checks profit targets
-    - Executes automatic position management
+    This task monitors active positions and executes adjustments
+    as needed based on the 3 core requirements
     """
-    from api.strategy import monitor_positions
-    return monitor_positions()
-
-@app.task(bind=True, name='api.strategy.execute_strategy_background_task')  
-def execute_strategy_background_task(self, underlying="BTC", reference_date=None, profit_target=50.0, position_size=2):
-    """
-    Execute delta strategy in background
-    
-    Args:
-        underlying: Asset symbol (e.g., "BTC")
-        reference_date: Optional date in YYYY-MM-DD format
-        profit_target: Profit target percentage (default 50%)
-        position_size: Position size (default 2)
-    """
-    from api.strategy import execute_strategy_background
-    return execute_strategy_background(underlying, reference_date, profit_target, position_size)
-
-@app.task(bind=True, name='api.strategy.emergency_close_all_task')
-def emergency_close_all_task(self):
-    """
-    Emergency close all active positions
-    
-    This task will immediately close all open positions
-    in case of emergency or system shutdown
-    """
-    from api.strategy import emergency_close_all
-    return emergency_close_all()
+    from api.strategy import MonthlyStrategy
+    strategy = MonthlyStrategy()
+    return strategy.monitor_and_adjust()
