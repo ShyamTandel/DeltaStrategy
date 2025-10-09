@@ -376,38 +376,10 @@ class DeltaClient:
         except Exception as e:
             return {'error': str(e)}
 
-    def get_account_summary(self):
-        # Try multiple possible endpoints for account info
-        endpoints = ["/wallet/balances", "/accounts", "/wallet", "/profile"]
-        
-        for endpoint in endpoints:
-            try:
-                path = self._full_path(endpoint)
-                url = self.base + path
-                headers = self._headers("GET", endpoint)
-                
-                if self.debug:
-                    print(f"Trying endpoint: {endpoint}")
-                
-                r = requests.get(url, headers=headers)
-                
-                if r.status_code == 200:
-                    return r.json()
-                elif self.debug:
-                    print(f"Endpoint {endpoint} returned {r.status_code}: {r.text[:200]}")
-                    
-            except Exception as e:
-                if self.debug:
-                    print(f"Error with endpoint {endpoint}: {e}")
-                continue
-        
-        # If all endpoints failed, try the last one and let it raise the error
-        path = self._full_path("/wallet/balances")
-        url = self.base + path
-        headers = self._headers("GET", "/wallet/balances")
-        r = requests.get(url, headers=headers)
-        r.raise_for_status()
-        return r.json()
+    def get_wallet_balances(self):
+        """GET /v2/wallet/balances"""
+        return self._make_auth_request("GET", "/wallet/balances")
+
 
     def test_auth(self):
         """Test authentication with multiple possible endpoints"""

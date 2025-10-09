@@ -15,11 +15,7 @@ class OptionPosition(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
     remote_order_id = models.BigIntegerField(null=True, blank=True)
     active = models.BooleanField(default=True)
-    
-    # New fields for PnL tracking
-    realized_pnl = models.DecimalField(max_digits=20, decimal_places=8, default=0.00, help_text="Realized PnL when position is closed")
     closed_at = models.DateTimeField(null=True, blank=True, help_text="UTC timestamp when position was closed")
-    close_price = models.DecimalField(max_digits=20, decimal_places=8, null=True, blank=True, help_text="Price at which position was closed")
     
     # Strategy cycle tracking
     strategy_cycle_id = models.CharField(max_length=50, null=True, blank=True, help_text="Monthly cycle identifier (YYYY-MM)")
@@ -32,23 +28,19 @@ class OptionPosition(models.Model):
         return f"{self.symbol} {self.side} delta={self.delta}"
 
 
-class MonthlyPnLTracker(models.Model):
+
+class InitialBalanceTracker(models.Model):
     """
-    Track realized PnL for each monthly strategy cycle
+    Track initial USD balance for each strategy cycle
     """
-    cycle_id = models.CharField(max_length=50, help_text="Monthly cycle identifier (YYYY-MM)")
-    underlying = models.CharField(max_length=10, default="BTC", help_text="Underlying asset")
-    closed_position_symbol = models.CharField(max_length=128, help_text="Symbol of closed position")
-    realized_pnl = models.DecimalField(max_digits=20, decimal_places=8, help_text="Realized PnL from closed position")
-    close_price = models.DecimalField(max_digits=20, decimal_places=8, help_text="Price at which position was closed")
-    entry_price = models.DecimalField(max_digits=20, decimal_places=8, help_text="Original entry price")
-    size = models.DecimalField(max_digits=20, decimal_places=8, help_text="Position size")
-    closed_at = models.DateTimeField(help_text="UTC timestamp when position was closed")
+    cycle_id = models.CharField(max_length=50, unique=True, help_text="Monthly cycle identifier (YYYY-MM)")
+    initial_balance_usd = models.DecimalField(max_digits=20, decimal_places=8, help_text="Initial USD balance when cycle started")
+    initial_balance_inr = models.DecimalField(max_digits=20, decimal_places=2, help_text="Initial INR equivalent balance")
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
-        db_table = 'monthly_pnl_tracker'
-        unique_together = ['cycle_id', 'closed_position_symbol', 'closed_at']  # Prevent duplicates
+        db_table = 'initial_balance_tracker'
         
     def __str__(self):
-        return f"{self.cycle_id} - {self.closed_position_symbol}: ${self.realized_pnl}"
+        return f"{self.cycle_id}: Initial USD ${self.initial_balance_usd} (₹{self.initial_balance_inr})"
