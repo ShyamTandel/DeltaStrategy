@@ -9,6 +9,7 @@ Core Requirements:
 
 import logging
 from datetime import datetime, time
+import traceback
 from typing import Dict, List
 from django.utils import timezone
 from django.db import transaction
@@ -26,12 +27,13 @@ logger = logging.getLogger(__name__)
 
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
-    
-    def __init__(self, underlying: str = "BTC"):
+
+    def __init__(self, underlying: str = "BTC", date: str = "17-10-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
-        
-        # Strategy parameters  
+        self.date = date
+
+        # Strategy parameters
         self.call_delta_range = (0.15, 0.25)
         self.put_delta_range = (-0.25, -0.15)
         self.expiry_close_time = time(12, 30)  # 12:30 PM
@@ -51,7 +53,7 @@ class MonthlyStrategy:
             cycle_id = f"{current_date.year}-{current_date.month:02d}"
             
             self.log(f"🚀 Starting monthly cycle: {cycle_id}")
-            
+            print("cycle_id::::::::::",cycle_id)
             # Store initial balance
             self._store_initial_balance(cycle_id)
             
@@ -65,20 +67,23 @@ class MonthlyStrategy:
             # Log first few options for debugging
             for i, option in enumerate(options[:3]):
                 greeks = option.get("greeks", {})
+                print("greeks::::::::",greeks)
                 delta = greeks.get("delta", "0")
                 symbol = option.get("symbol", "Unknown")
                 self.log(f"   Option {i+1}: {symbol} - Delta: {delta}")
             
             call_option = self._select_option_by_delta(options, "call")
+            print("callllllllllllllll",call_option)
             put_option = self._select_option_by_delta(options, "put")
-            
+            print("putttttttttttttttttt",put_option)
             if not call_option or not put_option:
                 return {"success": False, "error": "Options not found in delta range"}
             
             # Sell both positions
             call_result = self._sell_option(call_option, cycle_id)
+            print("afterr callllllllllllllll")
             put_result = self._sell_option(put_option, cycle_id)
-            
+            print("afterr putttttttttttttttttt")
             return {
                 "success": True,
                 "cycle_id": cycle_id,
@@ -87,9 +92,14 @@ class MonthlyStrategy:
                 "message": "Monthly cycle started"
             }
             
+        except ValueError as e:
+            self.log(f"⚠️ Value error: {e}")
+            return {"success": False, "error_type": "ValueError", "error": str(e)}
+
         except Exception as e:
-            self.log(f"❌ Error starting cycle: {e}")
-            return {"success": False, "error": str(e)}
+            tb = traceback.format_exc()
+            self.log(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
+            return {"success": False, "error_type": "Exception", "error": str(e), "traceback": tb}
     
     # ===== 2. ADJUSTMENT LOGIC =====
     
@@ -195,12 +205,13 @@ class MonthlyStrategy:
                 # If any option price becomes double compared to other -> close the cheaper one
                 if price1 >= 2 * price2 and price2 > 0:
                     # Close p2 (the cheaper one)
-                    close_response = self.client.place_order(
-                        product_id=p2.product_id,
-                        size=p2.size,
-                        side="buy",
-                        order_type="market"
-                    )
+                    close_body = {
+                        "product_symbol": p2.symbol,
+                        "size": p2.size,
+                        "side": "buy",
+                        "order_type": "market_order"
+                    }
+                    close_response = self.client.place_order(body=close_body)
                     if close_response.get("success"):
                         p2.active = False
                         p2.closed_at = timezone.now()
@@ -210,12 +221,13 @@ class MonthlyStrategy:
                         
                 elif price2 >= 2 * price1 and price1 > 0:
                     # Close p1 (the cheaper one)
-                    close_response = self.client.place_order(
-                        product_id=p1.product_id,
-                        size=p1.size,
-                        side="buy",
-                        order_type="market"
-                    )
+                    close_body = {
+                        "product_symbol": p1.symbol,
+                        "size": p1.size,
+                        "side": "buy",
+                        "order_type": "market_order"
+                    }
+                    close_response = self.client.place_order(body=close_body)
                     if close_response.get("success"):
                         p1.active = False
                         p1.closed_at = timezone.now()
@@ -243,12 +255,13 @@ class MonthlyStrategy:
                     to_close = open_positions[0]  # Close the put
                 
                 if strikes_crossed and to_close:
-                    close_response = self.client.place_order(
-                        product_id=to_close.product_id,
-                        size=to_close.size,
-                        side="buy",
-                        order_type="market"
-                    )
+                    close_body = {
+                        "product_symbol": to_close.symbol,
+                        "size": to_close.size,
+                        "side": "buy",
+                        "order_type": "market_order"
+                    }
+                    close_response = self.client.place_order(body=close_body)
                     if close_response.get("success"):
                         to_close.active = False
                         to_close.closed_at = timezone.now()
@@ -324,15 +337,17 @@ class MonthlyStrategy:
     def _store_initial_balance(self, cycle_id: str):
         """Store initial USD balance"""
         current_balance = self._get_current_balance()
-        
+        print("current_balance::::::::::",current_balance)
         # Get INR equivalent
         wallet_response = self.client.get_wallet_balances()
+        print("wallet_response::::::::::",wallet_response)
         inr_equivalent = 0.0
         if wallet_response.get("success"):
-            balances = wallet_response.get("data", {}).get("result", [])
+            balances = wallet_response.get("result", [])  # Fixed: removed .get("data", {})
             for balance in balances:
                 if "balance_inr" in balance:
                     inr_equivalent = float(balance.get("balance_inr", 0))
+                    print("inr_equivalent::::::::::",inr_equivalent)
                     break
         
         InitialBalanceTracker.objects.update_or_create(
@@ -349,10 +364,13 @@ class MonthlyStrategy:
         """Get current USD balance"""
         try:
             wallet_response = self.client.get_wallet_balances()
-            if wallet_response.get("success"):
-                balances = wallet_response.get("data", {}).get("result", [])
+            print("wallet_response::::::::::",wallet_response)
+            if wallet_response.get("success") == True:
+                balances = wallet_response.get("result", [])  # Fixed: removed .get("data", {})
+                print("balances::::::::::",balances)
                 for balance in balances:
                     if balance.get("asset_symbol", "").upper() == "USD":
+                        print("USD balance found::::::::::", balance.get("balance", 0))
                         return float(balance.get("balance", 0))
             return 0.0
         except Exception:
@@ -361,14 +379,21 @@ class MonthlyStrategy:
     def _get_monthly_options(self) -> List[Dict]:
         """Get option chain"""
         try:
-            response = self.client.get_option_chain(underlying=self.underlying)
+            response = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
             return response.get("result", []) if response.get("success") else []
         except Exception:
             return []
     
     def _select_option_by_delta(self, options: List[Dict], option_type: str) -> Dict:
         """Select option within delta range"""
-        delta_range = self.call_delta_range if option_type == "call" else self.put_delta_range
+        if option_type == "call":
+            delta_range = self.call_delta_range
+        elif option_type == "put":
+            delta_range = self.put_delta_range
+        else:
+            return None
+        
+        print("delta_range::::::::::",delta_range)
         
         for option in options:
             # Delta is nested in greeks object as string
@@ -376,6 +401,7 @@ class MonthlyStrategy:
             delta_str = greeks.get("delta", "0")
             try:
                 delta = float(delta_str)
+                print("delta::::::::::",delta)
             except (ValueError, TypeError):
                 continue
                 
@@ -383,20 +409,26 @@ class MonthlyStrategy:
                 self.log(f"📊 Found {option_type} option: {option.get('symbol', 'Unknown')} (δ={delta:.3f})")
                 return option
         
+        # Only return error after checking ALL options
         self.log(f"❌ No {option_type} option found in delta range {delta_range}")
-        return None
+        return {
+            "success": False,
+            "error": f"No {option_type} option found in delta range {delta_range}"
+        }
     
     def _sell_option(self, option: Dict, cycle_id: str) -> Dict:
         """Sell option and store in database"""
         try:
             # Place sell order
-            order_response = self.client.place_order(
-                product_id=option["product_id"],
-                size=1,
-                side="sell",
-                order_type="market"
-            )
-            
+            print("option::::::::::",option)
+            order_body = {
+                "product_symbol": option["symbol"],
+                "size": 1,
+                "side": "sell",
+                "order_type": "market_order"
+            }
+            order_response = self.client.place_order(body=order_body)
+            print("order_response::::::::::",order_response)
             if order_response.get("success"):
                 # Extract delta from greeks
                 greeks = option.get("greeks", {})
@@ -405,6 +437,24 @@ class MonthlyStrategy:
                     delta_value = float(delta_str)
                 except (ValueError, TypeError):
                     delta_value = 0.0
+                
+                # Extract expiry date from symbol (e.g., P-BTC-114000-171025 -> 171025 -> 2025-10-17)
+                try:
+                    symbol = option["symbol"]
+                    # Extract date part from symbol (last 6 digits)
+                    date_part = symbol.split("-")[-1]  # "171025"
+                    if len(date_part) == 6:
+                        # Parse as DDMMYY format
+                        day = int(date_part[:2])
+                        month = int(date_part[2:4])
+                        year = 2000 + int(date_part[4:6])  # Convert YY to 20YY
+                        expiry_date = datetime(year, month, day).date()
+                    else:
+                        # Fallback to a default date if parsing fails
+                        expiry_date = datetime(2025, 10, 17).date()
+                except (ValueError, IndexError):
+                    # Fallback to a default date
+                    expiry_date = datetime(2025, 10, 17).date()
                 
                 # Store in database
                 OptionPosition.objects.create(
@@ -415,7 +465,7 @@ class MonthlyStrategy:
                     mark_price=float(option.get("mark_price", 0)),
                     strike_price=float(option.get("strike_price", 0)),
                     delta=delta_value,
-                    expiry_date=datetime.strptime(option.get("expiry_date", ""), "%Y-%m-%d").date(),
+                    expiry_date=expiry_date,
                     strategy_cycle_id=cycle_id,
                     is_initial_position=True,
                     remote_order_id=order_response.get("result", {}).get("id")
@@ -426,9 +476,15 @@ class MonthlyStrategy:
             
             return {"success": False, "error": "Order failed"}
             
+        except ValueError as e:
+            self.log(f"⚠️ Value error: {e}")
+            return {"success": False, "error_type": "ValueError", "error": str(e)}
+
         except Exception as e:
-            self.log(f"❌ Sell error: {e}")
-            return {"success": False, "error": str(e)}
+            tb = traceback.format_exc()
+            self.log(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
+            return {"success": False, "error_type": "Exception", "error": str(e), "traceback": tb}
+    
     
     def _close_all_positions(self, reason: str) -> Dict:
         """Close all active positions"""
@@ -438,12 +494,13 @@ class MonthlyStrategy:
             closed_count = 0
             for position in active_positions:
                 # Place buy order to close
-                close_response = self.client.place_order(
-                    product_id=position.product_id,
-                    size=position.size,
-                    side="buy",
-                    order_type="market"
-                )
+                close_body = {
+                    "product_symbol": position.symbol,
+                    "size": position.size,
+                    "side": "buy",
+                    "order_type": "market_order"
+                }
+                close_response = self.client.place_order(body=close_body)
                 
                 if close_response.get("success"):
                     position.active = False
