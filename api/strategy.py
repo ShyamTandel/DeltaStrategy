@@ -28,14 +28,15 @@ logger = logging.getLogger(__name__)
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
 
-    def __init__(self, underlying: str = "BTC", date: str = "17-10-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "13-10-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
 
         # Strategy parameters
-        self.call_delta_range = (0.15, 0.25)
-        self.put_delta_range = (-0.25, -0.15)
+        self.size = 1
+        self.call_delta_range = (0.16, 0.22)
+        self.put_delta_range = (-0.22, -0.16)
         self.expiry_close_time = time(12, 30)  # 12:30 PM
     
     def log(self, message: str):
@@ -111,7 +112,7 @@ class MonthlyStrategy:
             
             # Check target achieved
             target_status = self._check_target(cycle_id, target_profit_percentage)
-            
+            print("target_status::::::::::",target_status)
             if target_status["target_achieved"]:
                 self.log("🎯 Target achieved! Closing positions")
                 return self._close_all_positions("Target achieved")
@@ -121,12 +122,31 @@ class MonthlyStrategy:
                 self.log("⏰ Expiry time! Closing positions")
                 return self._close_all_positions("Expiry time reached")
             
+            # ===== DELTA UPDATION =====
+            open_positions = list(OptionPosition.objects.filter(active=True))
+            for pos in open_positions:
+                try:
+                    ticker = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
+                    if ticker.get("success"):
+                        ticker = next((t for t in ticker["result"] if t.get("symbol") == pos.symbol), None)
+                        mark_price = float(ticker.get("mark_price", 0))
+                        greeks = ticker.get("greeks", {})
+                        delta = float(greeks.get("delta", pos.delta))
+                        
+                        pos.mark_price = mark_price
+                        pos.delta = delta
+                        pos.save()
+                        
+                        self.log(f"🔄 Updated {pos.symbol}: mark_price={mark_price}, delta={delta}")
+                except Exception as e:
+                    self.log(f"⚠️ Error updating {pos.symbol}: {e}")
+
             # ===== COMPREHENSIVE ADJUSTMENT LOGIC =====
             actions = []
             
             # Get current open positions
             open_positions = list(OptionPosition.objects.filter(active=True))
-            
+            print("open_positions::::::::::",open_positions)
             # Get current option chain tickers for price and delta comparison
             tickers = self._get_monthly_options()
             
@@ -134,7 +154,7 @@ class MonthlyStrategy:
             if len(open_positions) == 1:
                 open_pos = open_positions[0]
                 target_delta = open_pos.delta
-                
+                print("target_delta::::::::::",target_delta)
                 # If open position is put (negative delta), search for matching call
                 if open_pos.symbol.startswith("P-") or open_pos.delta < 0:
                     target_min = abs(target_delta) - 0.03
@@ -154,8 +174,10 @@ class MonthlyStrategy:
                             continue
                     
                     if matching:
+                        print("matching put::::::::::",matching)
                         # Sell the best matching call (step 13)
                         candidate = min(matching, key=lambda x: abs(float(x["greeks"]["delta"]) - abs(target_delta)))
+                        print("candidate put::::::::::",candidate)
                         sell_result = self._sell_option(candidate, cycle_id)
                         if sell_result["success"]:
                             actions.append(f"sold matching call {candidate['symbol']}")
@@ -179,7 +201,9 @@ class MonthlyStrategy:
                             continue
                     
                     if matching:
+                        print("matching call::::::::::",matching)
                         candidate = min(matching, key=lambda x: abs(abs(float(x["greeks"]["delta"])) - abs(target_delta)))
+                        print("candidate put::::::::::",candidate)
                         sell_result = self._sell_option(candidate, cycle_id)
                         if sell_result["success"]:
                             actions.append(f"sold matching put {candidate['symbol']}")
@@ -199,9 +223,12 @@ class MonthlyStrategy:
                 
                 # Compare prices between first two positions
                 p1, p2 = open_positions[0], open_positions[1]
+                print("p1::::::::::",p1)
+                print("p2::::::::::",p2)
                 price1 = current_prices.get(p1.id, 0)
                 price2 = current_prices.get(p2.id, 0)
-                
+                print("price1::::::::::",price1)
+                print("price2::::::::::",price2)
                 # If any option price becomes double compared to other -> close the cheaper one
                 if price1 >= 2 * price2 and price2 > 0:
                     # Close p2 (the cheaper one)
@@ -255,6 +282,7 @@ class MonthlyStrategy:
                     to_close = open_positions[0]  # Close the put
                 
                 if strikes_crossed and to_close:
+                    print("Strikes crossed, closing position::::::::::",to_close)
                     close_body = {
                         "product_symbol": to_close.symbol,
                         "size": to_close.size,
@@ -272,6 +300,7 @@ class MonthlyStrategy:
             # Step 16: Check termination condition (both positions have same strike)
             open_positions = list(OptionPosition.objects.filter(active=True))
             if len(open_positions) == 2:
+                print("same strike check::::::::::",open_positions)
                 if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
                     actions.append("termination: strikes matched")
                     self.log("✅ Termination condition met: strikes matched")
@@ -296,17 +325,26 @@ class MonthlyStrategy:
             # Get initial balance
             tracker = InitialBalanceTracker.objects.get(cycle_id=cycle_id)
             initial_balance = float(tracker.initial_balance_usd)
-            
+            print("initial_balance::::::::::",initial_balance)
             # Get current balance
             current_balance = self._get_current_balance()
-            
+            print("current_balance::::::::::",current_balance)
+            live_positions = self.client.get_positions()
+            print("live_positions::::::::::",live_positions)
+            if live_positions.get("success"):
+                positions = live_positions.get("result", [])
+                realized_cashflow = sum(float(p.get("realized_cashflow", 0)) for p in positions)
+                print("realized_cashflow::::::::::",realized_cashflow)
+            current_balance_without_cashflow = current_balance - realized_cashflow
             # Calculate target
             target_balance = initial_balance * (1 + target_profit_percentage / 100)
-            target_achieved = current_balance >= target_balance
-            
+            target_achieved = current_balance_without_cashflow >= target_balance
+            print("target_balance::::::::::",target_balance)
+            print("target_achieved::::::::::",target_achieved)
             return {
                 "initial_balance": initial_balance,
                 "current_balance": current_balance,
+                "current_balance_without_cashflow": current_balance_without_cashflow,
                 "target_balance": target_balance,
                 "target_achieved": target_achieved
             }
@@ -423,7 +461,7 @@ class MonthlyStrategy:
             print("option::::::::::",option)
             order_body = {
                 "product_symbol": option["symbol"],
-                "size": 1,
+                "size": self.size,
                 "side": "sell",
                 "order_type": "market_order"
             }
@@ -461,7 +499,7 @@ class MonthlyStrategy:
                     product_id=option["product_id"],
                     symbol=option["symbol"],
                     side="sell",
-                    size=1,
+                    size=self.size,
                     mark_price=float(option.get("mark_price", 0)),
                     strike_price=float(option.get("strike_price", 0)),
                     delta=delta_value,
@@ -501,7 +539,7 @@ class MonthlyStrategy:
                     "order_type": "market_order"
                 }
                 close_response = self.client.place_order(body=close_body)
-                
+                print("close_response::::::::::",close_response)
                 if close_response.get("success"):
                     position.active = False
                     position.closed_at = timezone.now()
