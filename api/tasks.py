@@ -1,6 +1,7 @@
 from celery import shared_task
+from django.utils import timezone
 from api.delta_client import DeltaClient
-from api.monthly_strategy import start_monthly_cycle_if_needed, check_positions_and_adjust
+from api.strategy import MonthlyStrategy
 import logging
 from datetime import datetime
 
@@ -16,7 +17,8 @@ def monthly_strategy_start_task():
     logger.info(f"🔄 Checking if monthly cycle should start at {timestamp}")
     
     try:
-        result = start_monthly_cycle_if_needed()
+        strategy = MonthlyStrategy()
+        result = strategy.start_monthly_cycle()
         logger.info(f"📊 Monthly cycle start result: {result}")
         
         return {
@@ -35,7 +37,7 @@ def monthly_strategy_start_task():
         }
 
 @shared_task
-def periodic_adjustment_check(target_profit_dollars=1000.0):
+def periodic_adjustment_check(target_profit_percentage=80.0):
     """
     Periodic task to check position adjustments every 30 seconds
     This is the main monitoring task that runs continuously
@@ -45,13 +47,14 @@ def periodic_adjustment_check(target_profit_dollars=1000.0):
     
     try:
         # Main adjustment logic
-        result = check_positions_and_adjust(target_profit_dollars)
+        strategy = MonthlyStrategy()
+        result = strategy.monitor_and_adjust(target_profit_percentage)
         logger.info(f"📊 Adjustment check result: {result}")
         
         return {
             'timestamp': timestamp,
             'adjustment_result': result,
-            'target_profit': target_profit_dollars,
+            'target_profit': target_profit_percentage,
             'status': 'success'
         }
         
@@ -65,7 +68,7 @@ def periodic_adjustment_check(target_profit_dollars=1000.0):
         }
 
 @shared_task
-def periodic_api_check(target_profit=1000.0):
+def periodic_api_check(cycle_id=None, target_profit_percentage=80.0):
     """
     DEPRECATED: Legacy task - use periodic_adjustment_check instead
     Keeping for backward compatibility
@@ -74,8 +77,11 @@ def periodic_api_check(target_profit=1000.0):
     logger.info(f"🔄 Legacy API check at {timestamp} - use periodic_adjustment_check instead")
     
     try:
+        current_date = timezone.now()
+        cycle_id = f"{current_date.year}-{current_date.month:02d}"
         # Redirect to new adjustment check
-        result = check_positions_and_adjust(target_profit)
+        strategy = MonthlyStrategy()
+        result = strategy._check_target(cycle_id=cycle_id, target_profit_percentage=target_profit_percentage)
         logger.info(f"📊 Legacy check result: {result}")
         
         return {
@@ -110,32 +116,6 @@ def test_connection_task():
             'status': 'success'
         }
     except Exception as e:
-        return {
-            'timestamp': timestamp,
-            'error': str(e),
-            'status': 'error'
-        }
-
-@shared_task
-def manual_target_check(target_profit=1000.0):
-    """Manual task to check target and close positions"""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    logger.info(f"🎯 Manual target check at {timestamp} with target: {target_profit}")
-    
-    try:
-        client = DeltaClient(debug=True)
-        result = client.check_target_and_close_positions(target_profit)
-        
-        logger.info(f"Manual target check result: {result}")
-        return {
-            'timestamp': timestamp,
-            'result': result,
-            'status': 'success'
-        }
-        
-    except Exception as e:
-        error_msg = f"Error in manual target check: {str(e)}"
-        logger.error(error_msg)
         return {
             'timestamp': timestamp,
             'error': str(e),

@@ -17,10 +17,10 @@ BASE = settings.DELTA_API_BASE.rstrip('/')  # ensure no trailing slash
 class DeltaClient:
     API_PREFIX = "/v2"  # keep this single source of truth
 
-    def __init__(self, api_key=None, api_secret=None, base=None, debug: bool=False):
-        self.api_key = api_key or API_KEY
-        self.api_secret = api_secret or API_SECRET
-        self.base = (base or BASE).rstrip('/')
+    def __init__(self, debug: bool=False):
+        self.api_key = API_KEY
+        self.api_secret = API_SECRET
+        self.base = BASE.rstrip('/')
         self.debug = debug
         self._server_offset = None  # Will be calculated on first auth error
 
@@ -77,45 +77,26 @@ class DeltaClient:
             print(f"🕐 Using fallback server time offset: {self._server_offset} seconds")
         return self._server_offset
 
-    def _timestamp(self) -> str:
-        # Use standard UTC timestamp - Delta Exchange API accepts UTC timestamps
-        # The server processes options at IST times but API signatures use UTC
-        utc_timestamp = int(time.time())
-        
-        if self.debug:
-            import datetime
-            utc_dt = datetime.datetime.fromtimestamp(utc_timestamp, tz=datetime.timezone.utc)
-            print(f"🕐 UTC timestamp: {utc_timestamp} ({utc_dt.strftime('%Y-%m-%d %H:%M:%S UTC')})")
-            
-        return str(utc_timestamp)
+    def _timestamp(self):
+        # Delta live API expects seconds, not milliseconds
+        return str(int(time.time()))
 
-    def _full_path(self, path: str) -> str:
-        """
-        Return the canonical request path used by the API and signing:
-        always starts with /v2. Accept input like "/tickers" or "tickers".
-        """
+    def _full_path(self, path):
         if not path.startswith('/'):
             path = '/' + path
         if not path.startswith(self.API_PREFIX):
             path = self.API_PREFIX + path
         return path
 
-    def _sign(self, method: str, path: str, timestamp: str, body: dict | None = None, query_params: dict | None = None) -> str:
-        """
-        Create HMAC SHA256 signature.
-        prehash = METHOD + TIMESTAMP + REQUEST_PATH + QUERYSTRING + BODY_STRING
-        REQUEST_PATH must match request URL path (e.g. /v2/orders).
-        """
-        request_path = self._full_path(path)  # ensures /v2 prefix is present
+    def _sign(self, method, path, timestamp, body=None, query_params=None):
+        request_path = self._full_path(path)
 
+        # Canonical query string
         querystring = ""
         if query_params:
-            # deterministic ordering
-            # urlencode a list of sorted (key,value) pairs to match canonical ordering
             items = []
             for k in sorted(query_params.keys()):
                 v = query_params[k]
-                # handle list values
                 if isinstance(v, (list, tuple)):
                     for item in v:
                         items.append((k, str(item)))
@@ -123,41 +104,62 @@ class DeltaClient:
                     items.append((k, str(v)))
             querystring = "?" + urlencode(items)
 
-        body_str = ""
-        if body:
-            # JSON without sorted keys to match API expectations
-            body_str = json.dumps(body, separators=(', ', ': '))
+        # Body string
+        body_str = json.dumps(body) if body else ""
 
         prehash = f"{method.upper()}{timestamp}{request_path}{querystring}{body_str}"
 
-        # ensure secret is bytes
-        key = self.api_secret if isinstance(self.api_secret, (bytes, bytearray)) else self.api_secret.encode()
-        sig = hmac.new(key, prehash.encode(), hashlib.sha256).hexdigest()
+        sig = hmac.new(
+            self.api_secret.encode(),
+            prehash.encode(),
+            hashlib.sha256
+        ).hexdigest()
 
         if self.debug:
             print("=== SIGN DEBUG ===")
             print("method:", method)
             print("timestamp:", timestamp)
-            print("request_path:", request_path)
+            print("path:", request_path)
             print("querystring:", querystring)
             print("body_str:", body_str)
-            print("PREHASH:", prehash)
-            print("SIGNATURE:", sig)
-            print("==================")
+            print("prehash:", prehash)
+            print("signature:", sig)
+            print("=================")
 
         return sig
 
-    def _headers(self, method: str, path: str, body: dict | None = None, query_params: dict | None = None) -> dict:
+    def _headers(self, method, path, body=None, query_params=None):
         ts = self._timestamp()
-        sig = self._sign(method, path, ts, body=body, query_params=query_params)
+        sig = self._sign(method, path, ts, body, query_params)
         return {
             "Accept": "application/json",
             "Content-Type": "application/json",
             "api-key": self.api_key,
             "signature": sig,
             "timestamp": ts,
-            "User-Agent": "django-delta-bot/1.0"
+            "User-Agent": "python-delta-client"
         }
+
+    def _make_auth_request(self, method, path, body=None, query_params=None):
+        url = self.base + self._full_path(path)
+        headers = self._headers(method, path, body, query_params)
+
+        if method.upper() == "GET":
+            response = requests.get(url, headers=headers, params=query_params)
+        elif method.upper() == "POST":
+            response = requests.post(url, headers=headers, json=body, params=query_params)
+        elif method.upper() == "PUT":
+            response = requests.put(url, headers=headers, json=body, params=query_params)
+        elif method.upper() == "DELETE":
+            response = requests.delete(url, headers=headers, params=query_params)
+        else:
+            raise ValueError(f"Unsupported HTTP method: {method}")
+
+        if self.debug or response.status_code >= 400:
+            print(f"[{response.status_code}] {response.text}")
+
+        response.raise_for_status()
+        return response.json()
 
     # -------------------------
     # Public endpoints (no auth)
@@ -181,39 +183,6 @@ class DeltaClient:
         r.raise_for_status()
         return r.json()
 
-    # -------------------------
-    # Authenticated endpoints
-    # -------------------------
-    def _make_auth_request(self, method: str, path: str, body: dict = None, query_params: dict = None):
-        """Generic authenticated request method"""
-        full_path = self._full_path(path)
-        url = self.base + full_path
-        headers = self._headers(method, path, body=body, query_params=query_params)
-        
-        if self.debug:
-            print(f"{method} {url}")
-            if body:
-                print(f"BODY: {body}")
-            if query_params:
-                print(f"PARAMS: {query_params}")
-        
-        if method.upper() == "GET":
-            r = requests.get(url, headers=headers, params=query_params)
-        elif method.upper() == "POST":
-            r = requests.post(url, json=body, headers=headers, params=query_params)
-        elif method.upper() == "PUT":
-            r = requests.put(url, json=body, headers=headers, params=query_params)
-        elif method.upper() == "DELETE":
-            r = requests.delete(url, headers=headers, params=query_params)
-        else:
-            raise ValueError(f"Unsupported method: {method}")
-        
-        if r.status_code >= 400:
-            if self.debug:
-                print(f"Response status {r.status_code}, response text:", r.text)
-        
-        r.raise_for_status()
-        return r.json()
 
     def place_order(self, body: dict):
         """
@@ -244,7 +213,7 @@ class DeltaClient:
 
     def test_auth(self):
         """Test authentication with multiple possible endpoints"""
-        endpoints = ["/orders", "/positions/margined", "/wallet/balances", "/accounts"]
+        endpoints = ["/positions/margined", "/wallet/balances"]
         
         for endpoint in endpoints:
             try:

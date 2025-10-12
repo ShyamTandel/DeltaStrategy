@@ -24,11 +24,11 @@ app.autodiscover_tasks()
 app.conf.beat_schedule = {
     # Monitor active positions every 30 seconds automatically
     'monitor-monthly-strategy': {
-        'task': 'api.strategy.monitor_monthly_strategy',
+        'task': 'api.tasks.periodic_adjustment_check',
         'schedule': 30.0,  # Every 30 seconds
         'options': {
-            'expires': 25.0,  # Expire task if not executed within 25 seconds
-        }
+            'expires': 25.0,  # Expire if not executed in 25 seconds
+        },
     },
 }
 
@@ -40,7 +40,7 @@ app.conf.update(
     accept_content=['json'],
     result_serializer='json',
     result_backend='django-db',
-    task_always_eager=False,  # Set to True for testing
+    task_always_eager=False,  # True for testing only
     task_eager_propagates=True,
     worker_prefetch_multiplier=1,
     task_acks_late=True,
@@ -49,20 +49,8 @@ app.conf.update(
     result_compression='gzip',
 )
 
+
 @app.task(bind=True)
 def debug_task(self):
     """Debug task for testing Celery setup"""
     print(f'Request: {self.request!r}')
-
-
-@app.task(bind=True, name='api.strategy.monitor_monthly_strategy')
-def monitor_monthly_strategy_task(self):
-    """
-    Celery task to monitor monthly strategy every 30 seconds
-    
-    This task monitors active positions and executes adjustments
-    as needed based on the 3 core requirements
-    """
-    from api.strategy import MonthlyStrategy
-    strategy = MonthlyStrategy()
-    return strategy.monitor_and_adjust()
