@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
 
-    def __init__(self, underlying: str = "BTC", date: str = "13-10-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "14-10-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
@@ -178,10 +178,31 @@ class MonthlyStrategy:
                         # Sell the best matching call (step 13)
                         candidate = min(matching, key=lambda x: abs(float(x["greeks"]["delta"]) - abs(target_delta)))
                         print("candidate put::::::::::",candidate)
-                        sell_result = self._sell_option(candidate, cycle_id)
-                        if sell_result["success"]:
-                            actions.append(f"sold matching call {candidate['symbol']}")
-                            self.log(f"🔄 Sold matching call: {candidate['symbol']}")
+                        if "C-" in candidate["symbol"]:
+                            strike_price_call = float(candidate["strike_price"])
+                            if open_pos.strike_price >= strike_price_call:
+                                self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike CALL instead.")
+                                
+                                ticker = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
+                                # ✅ Fetch the same strike CALL option from your 'matching' list
+                                same_strike_call = next(
+                                    (opt for opt in ticker if float(opt["strike_price"]) == open_pos.strike_price and "C-" in opt["symbol"]),
+                                    None
+                                )
+                                
+                                if same_strike_call:
+                                    self.log(f"➡️ Selling same strike CALL: {same_strike_call['symbol']}")
+                                    sell_result = self._sell_option(same_strike_call, cycle_id)
+                                    actions.append(f"sold same strike CALL {same_strike_call['symbol']}")
+                                else:
+                                    self.log("⚠️ No matching same-strike CALL found in list.")
+                                    actions.append(f"failed to sell same strike CALL")
+                            else:
+                                # Default case — no crossing, proceed normally
+                                sell_result = self._sell_option(candidate, cycle_id)
+                                if sell_result["success"]:
+                                    actions.append(f"sold matching call {candidate['symbol']}")
+                                    self.log(f"🔄 Sold matching call: {candidate['symbol']}")
                 
                 else:
                     # Open position is call, find matching put
@@ -204,107 +225,128 @@ class MonthlyStrategy:
                         print("matching call::::::::::",matching)
                         candidate = min(matching, key=lambda x: abs(abs(float(x["greeks"]["delta"])) - abs(target_delta)))
                         print("candidate put::::::::::",candidate)
-                        sell_result = self._sell_option(candidate, cycle_id)
-                        if sell_result["success"]:
-                            actions.append(f"sold matching put {candidate['symbol']}")
-                            self.log(f"🔄 Sold matching put: {candidate['symbol']}")
+                        if "P-" in candidate["symbol"]:
+                            strike_price_put = float(candidate["strike_price"])
+                            if open_pos.strike_price <= strike_price_put:
+                                self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike PUT instead.")
+                                
+                                ticker = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
+                                # ✅ Fetch the same strike PUT option from your 'matching' list
+                                same_strike_put = next(
+                                    (opt for opt in ticker if float(opt["strike_price"]) == open_pos.strike_price and "P-" in opt["symbol"]),
+                                    None
+                                )
+                                
+                                if same_strike_put:
+                                    self.log(f"➡️ Selling same strike PUT: {same_strike_put['symbol']}")
+                                    sell_result = self._sell_option(same_strike_put, cycle_id)
+                                    actions.append(f"sold same strike PUT {same_strike_put['symbol']}")
+                                else:
+                                    self.log("⚠️ No matching same-strike PUT found in list.")
+                                    actions.append("failed to find same strike PUT")
+                            else:
+                                # Default case — no crossing, proceed normally
+                                sell_result = self._sell_option(candidate, cycle_id)
+                                if sell_result["success"]:
+                                    actions.append(f"sold matching put {candidate['symbol']}")
+                                    self.log(f"🔄 Sold matching put: {candidate['symbol']}")
             
-            # Step 9 & 10: Check if any option's price becomes double compared to other position
-            if len(open_positions) >= 2:
-                current_prices = {}
-                
-                # Get current prices from tickers
-                for p in open_positions:
-                    match = next((t for t in tickers if t.get("symbol") == p.symbol), None)
-                    if match:
-                        current_prices[p.id] = float(match.get("mark_price", 0))
-                    else:
-                        current_prices[p.id] = float(p.mark_price or 0)
-                
-                # Compare prices between first two positions
-                p1, p2 = open_positions[0], open_positions[1]
-                print("p1::::::::::",p1)
-                print("p2::::::::::",p2)
-                price1 = current_prices.get(p1.id, 0)
-                price2 = current_prices.get(p2.id, 0)
-                print("price1::::::::::",price1)
-                print("price2::::::::::",price2)
-                # If any option price becomes double compared to other -> close the cheaper one
-                if price1 >= 2 * price2 and price2 > 0:
-                    # Close p2 (the cheaper one)
-                    close_body = {
-                        "product_symbol": p2.symbol,
-                        "size": p2.size,
-                        "side": "buy",
-                        "order_type": "market_order"
-                    }
-                    close_response = self.client.place_order(body=close_body)
-                    if close_response.get("success"):
-                        p2.active = False
-                        p2.closed_at = timezone.now()
-                        p2.save()
-                        actions.append(f"closed {p2.symbol} because {p1.symbol} doubled {price1} vs {price2}")
-                        self.log(f"🔄 Closed {p2.symbol}: price doubled ({price1} vs {price2})")
-                        
-                elif price2 >= 2 * price1 and price1 > 0:
-                    # Close p1 (the cheaper one)
-                    close_body = {
-                        "product_symbol": p1.symbol,
-                        "size": p1.size,
-                        "side": "buy",
-                        "order_type": "market_order"
-                    }
-                    close_response = self.client.place_order(body=close_body)
-                    if close_response.get("success"):
-                        p1.active = False
-                        p1.closed_at = timezone.now()
-                        p1.save()
-                        actions.append(f"closed {p1.symbol} because {p2.symbol} doubled {price2} vs {price1}")
-                        self.log(f"🔄 Closed {p1.symbol}: price doubled ({price2} vs {price1})")
-            
-            # Step 15: Ensure strike prices never cross
-            open_positions = list(OptionPosition.objects.filter(active=True))
-            if len(open_positions) >= 2:
-                s1 = float(open_positions[0].strike_price)
-                s2 = float(open_positions[1].strike_price)
-                
-                # Check if strikes are crossing (call strike < put strike is invalid)
-                strikes_crossed = False
-                to_close = None
-                
-                if (open_positions[0].symbol.startswith("C-") and 
-                    open_positions[1].symbol.startswith("P-") and s1 < s2):
-                    strikes_crossed = True
-                    to_close = open_positions[1]  # Close the put
-                elif (open_positions[0].symbol.startswith("P-") and 
-                      open_positions[1].symbol.startswith("C-") and s2 < s1):
-                    strikes_crossed = True
-                    to_close = open_positions[0]  # Close the put
-                
-                if strikes_crossed and to_close:
-                    print("Strikes crossed, closing position::::::::::",to_close)
-                    close_body = {
-                        "product_symbol": to_close.symbol,
-                        "size": to_close.size,
-                        "side": "buy",
-                        "order_type": "market_order"
-                    }
-                    close_response = self.client.place_order(body=close_body)
-                    if close_response.get("success"):
-                        to_close.active = False
-                        to_close.closed_at = timezone.now()
-                        to_close.save()
-                        actions.append(f"closed {to_close.symbol} to avoid strike crossing")
-                        self.log(f"🔄 Closed {to_close.symbol}: avoiding strike crossing")
-            
-            # Step 16: Check termination condition (both positions have same strike)
-            open_positions = list(OptionPosition.objects.filter(active=True))
+            # Step 14: If both positions have same strike, close one of them
             if len(open_positions) == 2:
                 print("same strike check::::::::::",open_positions)
                 if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
                     actions.append("termination: strikes matched")
                     self.log("✅ Termination condition met: strikes matched")
+                    return {"status": "terminated", "reason": "strikes price matched"}
+                else:
+                    self.log("✅ Both positions have different strikes, continuing monitoring")
+                    # Step 9 & 10: Check if any option's price becomes double compared to other position
+                    current_prices = {}
+                    
+                    # Get current prices from tickers
+                    for p in open_positions:
+                        match = next((t for t in tickers if t.get("symbol") == p.symbol), None)
+                        if match:
+                            current_prices[p.id] = float(match.get("mark_price", 0))
+                        else:
+                            current_prices[p.id] = float(p.mark_price or 0)
+                    
+                    # Compare prices between first two positions
+                    p1, p2 = open_positions[0], open_positions[1]
+                    print("p1::::::::::",p1)
+                    print("p2::::::::::",p2)
+                    price1 = current_prices.get(p1.id, 0)
+                    price2 = current_prices.get(p2.id, 0)
+                    print("price1::::::::::",price1)
+                    print("price2::::::::::",price2)
+                    # If any option price becomes double compared to other -> close the cheaper one
+                    if price1 >= 2 * price2 and price2 > 0:
+                        # Close p2 (the cheaper one)
+                        close_body = {
+                            "product_symbol": p2.symbol,
+                            "size": p2.size,
+                            "side": "buy",
+                            "order_type": "market_order"
+                        }
+                        close_response = self.client.place_order(body=close_body)
+                        if close_response.get("success"):
+                            p2.active = False
+                            p2.closed_at = timezone.now()
+                            p2.save()
+                            actions.append(f"closed {p2.symbol} because {p1.symbol} doubled {price1} vs {price2}")
+                            self.log(f"🔄 Closed {p2.symbol}: price doubled ({price1} vs {price2})")
+                            
+                    elif price2 >= 2 * price1 and price1 > 0:
+                        # Close p1 (the cheaper one)
+                        close_body = {
+                            "product_symbol": p1.symbol,
+                            "size": p1.size,
+                            "side": "buy",
+                            "order_type": "market_order"
+                        }
+                        close_response = self.client.place_order(body=close_body)
+                        if close_response.get("success"):
+                            p1.active = False
+                            p1.closed_at = timezone.now()
+                            p1.save()
+                            actions.append(f"closed {p1.symbol} because {p2.symbol} doubled {price2} vs {price1}")
+                            self.log(f"🔄 Closed {p1.symbol}: price doubled ({price2} vs {price1})")
             
+            # # Step 15: Ensure strike prices never cross
+            # open_positions = list(OptionPosition.objects.filter(active=True))
+            # if len(open_positions) >= 2:
+            #     s1 = float(open_positions[0].strike_price)
+            #     s2 = float(open_positions[1].strike_price)
+                
+            #     # Check if strikes are crossing (call strike < put strike is invalid)
+            #     strikes_crossed = False
+            #     to_close = None
+                
+            #     if (open_positions[0].symbol.startswith("C-") and 
+            #         open_positions[1].symbol.startswith("P-") and s1 < s2):
+            #         strikes_crossed = True
+            #         to_close = open_positions[1]  # Close the put
+            #     elif (open_positions[0].symbol.startswith("P-") and 
+            #           open_positions[1].symbol.startswith("C-") and s2 < s1):
+            #         strikes_crossed = True
+            #         to_close = open_positions[0]  # Close the put
+                
+            #     if strikes_crossed and to_close:
+            #         print("Strikes crossed, closing position::::::::::",to_close)
+            #         close_body = {
+            #             "product_symbol": to_close.symbol,
+            #             "size": to_close.size,
+            #             "side": "buy",
+            #             "order_type": "market_order"
+            #         }
+            #         close_response = self.client.place_order(body=close_body)
+            #         if close_response.get("success"):
+            #             to_close.active = False
+            #             to_close.closed_at = timezone.now()
+            #             to_close.save()
+            #             actions.append(f"closed {to_close.symbol} to avoid strike crossing")
+            #             self.log(f"🔄 Closed {to_close.symbol}: avoiding strike crossing")
+                        
             return {
                 "success": True,
                 "action": "adjust",
@@ -314,9 +356,10 @@ class MonthlyStrategy:
             }
             
         except Exception as e:
+            trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
             self.log(f"❌ Monitor error: {e}")
-            return {"success": False, "error": str(e)}
-    
+            return {"success": False, "error": str(e), "traceback": trace_log}
+
     # ===== 3. TARGET & EXPIRY CLOSE =====
     
     def _check_target(self, cycle_id: str, target_profit_percentage: float) -> Dict:
@@ -423,36 +466,51 @@ class MonthlyStrategy:
             return []
     
     def _select_option_by_delta(self, options: List[Dict], option_type: str) -> Dict:
-        """Select option within delta range"""
+        """
+        Select the option closest to ATM (within delta range):
+        - CALL  → pick the lowest delta (closest to 0)
+        - PUT   → pick the highest delta (closest to 0)
+        """
+
         if option_type == "call":
-            delta_range = self.call_delta_range
+            delta_range = self.call_delta_range  # (0.16, 0.22)
         elif option_type == "put":
-            delta_range = self.put_delta_range
+            delta_range = self.put_delta_range   # (-0.22, -0.16)
         else:
+            self.log(f"⚠️ Invalid option type: {option_type}")
             return None
-        
-        print("delta_range::::::::::",delta_range)
-        
+
+        print(f"delta_range for {option_type}: {delta_range}")
+        filtered = []
+
         for option in options:
-            # Delta is nested in greeks object as string
             greeks = option.get("greeks", {})
             delta_str = greeks.get("delta", "0")
+
             try:
                 delta = float(delta_str)
-                print("delta::::::::::",delta)
             except (ValueError, TypeError):
                 continue
-                
+
+            # Check if delta falls in range
             if delta_range[0] <= delta <= delta_range[1]:
-                self.log(f"📊 Found {option_type} option: {option.get('symbol', 'Unknown')} (δ={delta:.3f})")
-                return option
-        
-        # Only return error after checking ALL options
-        self.log(f"❌ No {option_type} option found in delta range {delta_range}")
-        return {
-            "success": False,
-            "error": f"No {option_type} option found in delta range {delta_range}"
-        }
+                filtered.append((delta, option))
+
+        if not filtered:
+            self.log(f"⚠️ No {option_type.upper()} found in delta range {delta_range}")
+            return None
+
+        # ✅ Selection logic:
+        # CALL  → lowest delta
+        # PUT   → highest delta
+        if option_type == "call":
+            selected = min(filtered, key=lambda x: x[0])
+        else:  # put
+            selected = max(filtered, key=lambda x: x[0])
+
+        delta, option = selected
+        self.log(f"📊 Selected {option_type.upper()} option: {option.get('symbol', 'Unknown')} (δ={delta:.3f})")
+        return option
     
     def _sell_option(self, option: Dict, cycle_id: str) -> Dict:
         """Sell option and store in database"""
