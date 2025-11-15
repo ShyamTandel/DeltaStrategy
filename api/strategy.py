@@ -146,6 +146,15 @@ class MonthlyStrategy:
             
             # Get current open positions
             open_positions = list(OptionPosition.objects.filter(active=True))
+            if not open_positions:
+                self.log("✅ No open positions to monitor")
+                return {
+                    "success": True,
+                    "action": "monitor",
+                    "adjustments_made": actions,
+                    "open_positions": 0,
+                    "target_status": target_status
+                }
             print("open_positions::::::::::",open_positions)
             # Get current option chain tickers for price and delta comparison
             tickers = self._get_monthly_options()
