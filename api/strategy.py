@@ -203,7 +203,6 @@ class MonthlyStrategy:
                                 if sell_result["success"]:
                                     actions.append(f"sold matching call {candidate['symbol']}")
                                     self.log(f"🔄 Sold matching call: {candidate['symbol']}")
-                
                 else:
                     # Open position is call, find matching put
                     target_min = abs(target_delta) - 0.03
