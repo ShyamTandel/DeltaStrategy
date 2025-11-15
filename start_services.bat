@@ -5,8 +5,16 @@ echo ===================================================================
 
 cd /d f:\DELTASTRATEGY\DeltaStrategy
 
-echo Step 1: Starting Redis Server...
-start "Redis Server" cmd /k "wsl sudo service redis-server start"
+echo Step 1: Checking Redis status...
+
+tasklist | find "redis-server.exe" >nul
+if %errorlevel%==0 (
+    echo Redis is already running.
+) else (
+    echo Starting Redis Server...
+    start "Redis Server" cmd /k "cd /d C:\Program Files\Redis && redis-server.exe"
+)
+
 timeout /t 3
 
 echo Step 2: Starting Celery Worker...
