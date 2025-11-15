@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
 
-    def __init__(self, underlying: str = "BTC", date: str = "14-10-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "17-11-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
@@ -251,13 +251,105 @@ class MonthlyStrategy:
                                     actions.append(f"sold matching put {candidate['symbol']}")
                                     self.log(f"🔄 Sold matching put: {candidate['symbol']}")
             
-            # Step 14: If both positions have same strike, close one of them
+            # Step 14: If both positions have same strike, check if one price doubles the other
             if len(open_positions) == 2:
                 print("same strike check::::::::::",open_positions)
                 if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
-                    actions.append("termination: strikes matched")
-                    self.log("✅ Termination condition met: strikes matched")
-                    return {"status": "terminated", "reason": "strikes price matched"}
+                    # Get current prices for both positions
+                    p1, p2 = open_positions[0], open_positions[1]
+                    
+                    match1 = next((t for t in tickers if t.get("symbol") == p1.symbol), None)
+                    match2 = next((t for t in tickers if t.get("symbol") == p2.symbol), None)
+                    self.log("match1::::::::::",match1)
+                    self.log("match2::::::::::",match2)
+
+                    price1 = float(match1.get("mark_price", 0)) if match1 else float(p1.mark_price or 0)
+                    price2 = float(match2.get("mark_price", 0)) if match2 else float(p2.mark_price or 0)
+                    
+                    self.log(f"📊 Same strike detected: {p1.symbol} price={price1}, {p2.symbol} price={price2}")
+                    
+                    # Check if one price is double the other
+                    if (price1 >= 2 * price2 and price2 > 0) or (price2 >= 2 * price1 and price1 > 0):
+                        self.log(f"⚠️ Price doubled condition met - closing BOTH positions")
+                        
+                        # Close both positions
+                        closed_both = True
+                        for pos in [p1, p2]:
+                            close_body = {
+                                "product_symbol": pos.symbol,
+                                "size": pos.size,
+                                "side": "buy",
+                                "order_type": "market_order"
+                            }
+                            close_response = self.client.place_order(body=close_body)
+                            self.log("close_response::::::::::", close_response)
+                            if close_response.get("success"):
+                                pos.active = False
+                                pos.closed_at = timezone.now()
+                                pos.save()
+                                self.log(f"✅ Closed: {pos.symbol}")
+                            else:
+                                closed_both = False
+                                self.log(f"❌ Failed to close: {pos.symbol}")
+                        
+                        if closed_both:
+                            actions.append(f"closed BOTH positions (same strike, price doubled: {price1} vs {price2})")
+                            
+                            # Now sell two puts at nearest strike to market price
+                            self.log("🔄 Now selling two puts at nearest strike to market price")
+                            
+                            # Get market price (spot price)
+                            spot_price = self._get_spot_price()
+                            self.log(f"📈 Current spot price: {spot_price}")
+                            
+                            if spot_price > 0:
+                                # Find nearest strike price
+                                nearest_strike = self._find_nearest_strike(tickers, spot_price)
+                                self.log(f"🎯 Nearest strike to spot: {nearest_strike}")
+                                
+                                if nearest_strike:
+                                    # Find call and put options at this strike
+                                    call_at_strike = next(
+                                        (t for t in tickers if t.get("contract_type") == "call_options" and 
+                                         float(t.get("strike_price", 0)) == nearest_strike),
+                                        None
+                                    )
+                                    put_at_strike = next(
+                                        (t for t in tickers if t.get("contract_type") == "put_options" and 
+                                         float(t.get("strike_price", 0)) == nearest_strike),
+                                        None
+                                    )
+                                    
+                                    self.log(f"call_at_strike: {call_at_strike}")
+                                    self.log(f"put_at_strike: {put_at_strike}")
+                                    
+                                    if call_at_strike and put_at_strike:
+                                        # Sell call
+                                        sell_result_call = self._sell_option(call_at_strike, cycle_id)
+                                        # Sell put
+                                        sell_result_put = self._sell_option(put_at_strike, cycle_id)
+                                        
+                                        if sell_result_call["success"] and sell_result_put["success"]:
+                                            actions.append(f"sold call and put at strike {nearest_strike}")
+                                            self.log(f"✅ Sold call and put at strike {nearest_strike}")
+                                        else:
+                                            self.log(f"⚠️ Failed to sell call/put at strike {nearest_strike}")
+                                    else:
+                                        self.log(f"⚠️ Call or Put not found at strike {nearest_strike}")
+                                else:
+                                    self.log("⚠️ Could not find nearest strike")
+                            else:
+                                self.log("⚠️ Could not get spot price")
+                            
+                            return {
+                                "success": True,
+                                "action": "rebalanced",
+                                "reason": "Same strike price - one side doubled, reopened with call and put",
+                                "positions_closed": 2,
+                                "positions_opened": 2
+                            }
+                    else:
+                        self.log(f"✅ Same strike but price not doubled yet, continuing monitoring")
                 else:
                     self.log("✅ Both positions have different strikes, continuing monitoring")
                     # Step 9 & 10: Check if any option's price becomes double compared to other position
@@ -465,6 +557,51 @@ class MonthlyStrategy:
         except Exception:
             return []
     
+    def _get_spot_price(self) -> float:
+        """Get current spot price of the underlying"""
+        try:
+            # Get ticker info for the underlying
+            tickers = self._get_monthly_options()
+            if tickers and len(tickers) > 0:
+                print("tickers::::::::::", tickers)
+                print("first tickers::::::::::", tickers[0])
+
+                # Spot price is typically available in the first ticker
+                spot_price = float(tickers[0].get("spot_price", 0))
+                print("spot_price::::::::::", spot_price)
+                if spot_price > 0:
+                    return spot_price
+                
+                # Alternative: get from underlying_price field
+                for ticker in tickers[:5]:  # Check first few tickers
+                    if "underlying_price" in ticker:
+                        return float(ticker.get("underlying_price", 0))
+            return 0.0
+        except Exception as e:
+            self.log(f"⚠️ Error getting spot price: {e}")
+            return 0.0
+    
+    def _find_nearest_strike(self, tickers: List[Dict], spot_price: float) -> float:
+        """Find the nearest available strike price to the spot price"""
+        try:
+            # Get all unique strike prices
+            strikes = set()
+            for ticker in tickers:
+                strike = float(ticker.get("strike_price", 0))
+                if strike > 0:
+                    strikes.add(strike)
+            
+            if not strikes:
+                return 0.0
+            
+            # Find nearest strike to spot price
+            nearest = min(strikes, key=lambda x: abs(x - spot_price))
+            print("nearest strike::::::::::", nearest)
+            return nearest
+        except Exception as e:
+            self.log(f"⚠️ Error finding nearest strike: {e}")
+            return 0.0
+    
     def _select_option_by_delta(self, options: List[Dict], option_type: str) -> Dict:
         """
         Select the option closest to ATM (within delta range):
@@ -661,3 +798,223 @@ def monitor_strategy_task(self, target_profit_percentage=80.0):
     except Exception as e:
         logger.exception(f"[CELERY] Error: {e}")
         return {"success": False, "error": str(e)}
+    
+class TestStrangel(APIView):
+    """Post /api/test-strangel/ - Test strangel logic"""
+    permission_classes = [AllowAny]
+    def __init__(self, underlying: str = "BTC", date: str = "17-11-2025"):
+        self.underlying = underlying
+        self.client = DeltaClient(debug=True)
+        self.date = date
+
+        # Strategy parameters
+        self.size = 1
+        self.call_delta_range = (0.16, 0.22)
+        self.put_delta_range = (-0.22, -0.16)
+        self.expiry_close_time = time(12, 30)  # 12:30 PM
+
+    def post(self, request):
+        try:
+            client = DeltaClient()
+            current_date = timezone.now()
+            cycle_id = f"{current_date.year}-{current_date.month:02d}"
+            tickers = strategy._get_monthly_options()
+            p1, p2 = None, None
+            open_positions = list(OptionPosition.objects.filter(active=True))
+            if len(open_positions) == 2:
+                p1, p2 = open_positions[0], open_positions[1]
+            closed_both = True
+            for pos in [p1, p2]:
+                close_body = {
+                    "product_symbol": pos.symbol,
+                    "size": pos.size,
+                    "side": "buy",
+                    "order_type": "market_order"
+                }
+                close_response = client.place_order(body=close_body)
+                print("close_response::::::::::", close_response)
+                if close_response.get("success"):
+                    pos.active = False
+                    pos.closed_at = timezone.now()
+                    pos.save()
+                    print(f"✅ Closed: {pos.symbol}")
+                else:
+                    closed_both = False
+                    print(f"❌ Failed to close: {pos.symbol}")
+            
+            if closed_both:
+                print(f"closed BOTH positions (same strike, price doubled: {p1.mark_price} vs {p2.mark_price})")
+                
+                # Now sell two puts at nearest strike to market price
+                print("🔄 Now selling two puts at nearest strike to market price")
+                
+                # Get market price (spot price)
+                spot_price = self._get_spot_price()
+                print(f"📈 Current spot price: {spot_price}")
+                
+                if spot_price > 0:
+                    # Find nearest strike price
+                    nearest_strike = self._find_nearest_strike(tickers, spot_price)
+                    print(f"🎯 Nearest strike to spot: {nearest_strike}")
+                    
+                    if nearest_strike:
+                        # Find call and put options at this strike
+                        call_at_strike = next(
+                            (t for t in tickers if t.get("contract_type") == "call_options" and 
+                                float(t.get("strike_price", 0)) == nearest_strike),
+                            None
+                        )
+                        put_at_strike = next(
+                            (t for t in tickers if t.get("contract_type") == "put_options" and 
+                                float(t.get("strike_price", 0)) == nearest_strike),
+                            None
+                        )
+                        
+                        print(f"call_at_strike: {call_at_strike}")
+                        print(f"put_at_strike: {put_at_strike}")
+                        
+                        if call_at_strike and put_at_strike:
+                            # Sell call
+                            sell_result_call = self._sell_option(call_at_strike, cycle_id)
+                            # Sell put
+                            sell_result_put = self._sell_option(put_at_strike, cycle_id)
+                            
+                            if sell_result_call["success"] and sell_result_put["success"]:
+                                print(f"sold call and put at strike {nearest_strike}")
+                                print(f"✅ Sold call and put at strike {nearest_strike}")
+                            else:
+                                print(f"⚠️ Failed to sell call/put at strike {nearest_strike}")
+                        else:
+                            print(f"⚠️ Call or Put not found at strike {nearest_strike}")
+                    else:
+                        print("⚠️ Could not find nearest strike")
+                else:
+                    print("⚠️ Could not get spot price")
+                
+                return Response({
+                    "success": True,
+                    "action": "rebalanced",
+                    "reason": "Same strike price - one side doubled, reopened with call and put",
+                    "positions_closed": 2,
+                    "positions_opened": 2
+                })
+        except Exception as e:
+            trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
+            print(f"❌ Test strangel error: {e}")
+            return Response({"success": False, "error": str(e), "traceback": trace_log})
+        
+    def _get_spot_price(self) -> float:
+        """Get current spot price of the underlying"""
+        try:
+            # Get ticker info for the underlying
+            tickers = strategy._get_monthly_options()
+            if tickers and len(tickers) > 0:
+                print("tickers::::::::::", tickers)
+                print("first tickers::::::::::", tickers[0])
+
+                # Spot price is typically available in the first ticker
+                spot_price = float(tickers[0].get("spot_price", 0))
+                print("spot_price::::::::::", spot_price)
+                if spot_price > 0:
+                    return spot_price
+                
+                # Alternative: get from underlying_price field
+                for ticker in tickers[:5]:  # Check first few tickers
+                    if "underlying_price" in ticker:
+                        return float(ticker.get("underlying_price", 0))
+            return 0.0
+        except Exception as e:
+            print(f"⚠️ Error getting spot price: {e}")
+            return 0.0
+    
+    def _find_nearest_strike(self, tickers: List[Dict], spot_price: float) -> float:
+        """Find the nearest available strike price to the spot price"""
+        try:
+            # Get all unique strike prices
+            strikes = set()
+            for ticker in tickers:
+                strike = float(ticker.get("strike_price", 0))
+                if strike > 0:
+                    strikes.add(strike)
+            
+            if not strikes:
+                return 0.0
+            
+            # Find nearest strike to spot price
+            nearest = min(strikes, key=lambda x: abs(x - spot_price))
+            print("nearest strike::::::::::", nearest)
+            return nearest
+        except Exception as e:
+            print(f"⚠️ Error finding nearest strike: {e}")
+            return 0.0
+
+    def _sell_option(self, option: Dict, cycle_id: str) -> Dict:
+        """Sell option and store in database"""
+        try:
+            client = DeltaClient()
+            # Place sell order
+            print("option::::::::::",option)
+            order_body = {
+                "product_symbol": option["symbol"],
+                "size": self.size,
+                "side": "sell",
+                "order_type": "market_order"
+            }
+            order_response = client.place_order(body=order_body)
+            print("order_response::::::::::",order_response)
+            if order_response.get("success"):
+                # Extract delta from greeks
+                greeks = option.get("greeks", {})
+                delta_str = greeks.get("delta", "0")
+                try:
+                    delta_value = float(delta_str)
+                except (ValueError, TypeError):
+                    delta_value = 0.0
+                
+                # Extract expiry date from symbol (e.g., P-BTC-114000-171025 -> 171025 -> 2025-10-17)
+                try:
+                    symbol = option["symbol"]
+                    # Extract date part from symbol (last 6 digits)
+                    date_part = symbol.split("-")[-1]  # "171025"
+                    if len(date_part) == 6:
+                        # Parse as DDMMYY format
+                        day = int(date_part[:2])
+                        month = int(date_part[2:4])
+                        year = 2000 + int(date_part[4:6])  # Convert YY to 20YY
+                        expiry_date = datetime(year, month, day).date()
+                    else:
+                        # Fallback to a default date if parsing fails
+                        expiry_date = datetime(2025, 10, 17).date()
+                except (ValueError, IndexError):
+                    # Fallback to a default date
+                    expiry_date = datetime(2025, 10, 17).date()
+                
+                # Store in database
+                OptionPosition.objects.create(
+                    product_id=option["product_id"],
+                    symbol=option["symbol"],
+                    side="sell",
+                    size=self.size,
+                    mark_price=float(option.get("mark_price", 0)),
+                    strike_price=float(option.get("strike_price", 0)),
+                    delta=delta_value,
+                    expiry_date=expiry_date,
+                    strategy_cycle_id=cycle_id,
+                    is_initial_position=True,
+                    remote_order_id=order_response.get("result", {}).get("id")
+                )
+                
+                print(f"✅ Sold: {option['symbol']} (δ={delta_value:.3f})")
+                return {"success": True}
+            
+            return {"success": False, "error": "Order failed"}
+            
+        except ValueError as e:
+            print(f"⚠️ Value error: {e}")
+            return {"success": False, "error_type": "ValueError", "error": str(e)}
+
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
+            return {"success": False, "error_type": "Exception", "error": str(e), "traceback": tb}
+    
