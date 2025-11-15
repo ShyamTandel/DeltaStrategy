@@ -1018,3 +1018,11 @@ class TestStrangel(APIView):
             print(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
             return {"success": False, "error_type": "Exception", "error": str(e), "traceback": tb}
     
+class CloseAllPositionsView(APIView):
+    """POST /api/close-all/ - Close all active positions"""
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        reason = request.data.get("reason", "Manual close all positions")
+        result = strategy._close_all_positions(reason)
+        return Response(result)
