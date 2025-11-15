@@ -17,7 +17,7 @@ Including another URLconf
 from django.contrib import admin
 from django.urls import path
 from api import views
-from api.strategy import StartStrategyView, MonitorStrategyView, StatusView
+from api.strategy import StartStrategyView, MonitorStrategyView, StatusView, TestStrangel
 
 urlpatterns = [
     path('', views.home_view, name='home'),
@@ -27,4 +27,5 @@ urlpatterns = [
     path('api/start/', StartStrategyView.as_view(), name='start-strategy'),
     path('api/monitor/', MonitorStrategyView.as_view(), name='monitor-strategy'),
     path('api/status/', StatusView.as_view(), name='strategy-status'),
+    path('api/test-strangel/', TestStrangel.as_view(), name='test-strangel'),
 ]
