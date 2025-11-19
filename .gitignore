@@ -1,7 +1,79 @@
-venv
+# Python
+venv/
 __pycache__/
+*.py[cod]
+*$py.class
 *.pyc
-db.sqlite3
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Django
+*.log
 *deltastrategy.logs
-logs
+local_settings.py
+db.sqlite3
+db.sqlite3-journal
+/staticfiles/
+/media/
+
+# Environment variables - NEVER COMMIT THESE!
+.env
+.env.local
+.env.staging
+.env.production
+.env.*.local
+
+# Logs
+logs/
 logs/deltastrategy.log
+
+# Backups
+backups/
+*.sql
+*.dump
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+
+# Secret files
+*.pem
+*.key
+*.cert
+*.crt
+secrets/

@@ -821,7 +821,90 @@ class TestStrangel(APIView):
         self.put_delta_range = (-0.22, -0.16)
         self.expiry_close_time = time(12, 30)  # 12:30 PM
 
+    def log(self, message: str):
+        """Log with timestamp"""
+        timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S UTC")
+        print(f"[{timestamp}] [STRATEGY] {message}")
+        logger.info(f"[{timestamp}] [STRATEGY] {message}")
+
     def post(self, request):
+        try:
+            # Get market price (spot price)
+            current_date = timezone.now()
+            cycle_id = f"{current_date.year}-{current_date.month:02d}"
+            tickers = strategy._get_monthly_options()
+
+            actions = []
+            spot_price = self._get_spot_price()
+            self.log(f"📈 Current spot price: {spot_price}")
+            
+            if spot_price > 0:
+                # Find nearest strike price
+                nearest_strike = self._find_nearest_strike(tickers, spot_price)
+                self.log(f"🎯 Nearest strike to spot: {nearest_strike}")
+                
+                if nearest_strike:
+                    # Find call and put options at this strike
+                    call_at_strike = next(
+                        (t for t in tickers if t.get("contract_type") == "call_options" and 
+                            float(t.get("strike_price", 0)) == nearest_strike),
+                        None
+                    )
+                    put_at_strike = next(
+                        (t for t in tickers if t.get("contract_type") == "put_options" and 
+                            float(t.get("strike_price", 0)) == nearest_strike),
+                        None
+                    )
+                    
+                    self.log(f"call_at_strike: {call_at_strike}")
+                    self.log(f"put_at_strike: {put_at_strike}")
+                    
+                    if call_at_strike and put_at_strike:
+                        # Sell call
+                        sell_result_call = self._sell_option(call_at_strike, cycle_id)
+                        # Sell put
+                        sell_result_put = self._sell_option(put_at_strike, cycle_id)
+                        
+                        if sell_result_call["success"] and sell_result_put["success"]:
+                            actions.append(f"sold call and put at strike {nearest_strike}")
+                            self.log(f"✅ Sold call and put at strike {nearest_strike}")
+                            return Response({
+                                "success": True,
+                                "action": "straddle_created",
+                                "strike": nearest_strike,
+                                "actions": actions
+                            })
+                        else:
+                            self.log(f"⚠️ Failed to sell call/put at strike {nearest_strike}")
+                            return Response({
+                                "success": False,
+                                "error": "Failed to sell call/put options"
+                            })
+                    else:
+                        self.log(f"⚠️ Call or Put not found at strike {nearest_strike}")
+                        return Response({
+                            "success": False,
+                            "error": "Call or Put not found at nearest strike"
+                        })
+                else:
+                    self.log("⚠️ Could not find nearest strike")
+                    return Response({
+                        "success": False,
+                        "error": "Could not find nearest strike"
+                    })
+            else:
+                self.log("⚠️ Could not get spot price")
+                return Response({
+                    "success": False,
+                    "error": "Could not get spot price"
+                })
+        except Exception as e:
+            trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
+            print(f"❌ Test strangel error: {e}")
+            return Response({"success": False, "error": str(e), "traceback": trace_log})
+        
+
+    def stradel(self):
         try:
             client = DeltaClient()
             current_date = timezone.now()
@@ -829,87 +912,127 @@ class TestStrangel(APIView):
             tickers = strategy._get_monthly_options()
             p1, p2 = None, None
             open_positions = list(OptionPosition.objects.filter(active=True))
-            if len(open_positions) == 2:
-                p1, p2 = open_positions[0], open_positions[1]
-            closed_both = True
-            for pos in [p1, p2]:
-                close_body = {
-                    "product_symbol": pos.symbol,
-                    "size": pos.size,
-                    "side": "buy",
-                    "order_type": "market_order"
+            actions = []
+            if not open_positions:
+                return {
+                    "success": False,
+                    "action": "No open positions",
+                    "reason": "Need at least 2 open positions to test strangel logic"
                 }
-                close_response = client.place_order(body=close_body)
-                print("close_response::::::::::", close_response)
-                if close_response.get("success"):
-                    pos.active = False
-                    pos.closed_at = timezone.now()
-                    pos.save()
-                    print(f"✅ Closed: {pos.symbol}")
-                else:
-                    closed_both = False
-                    print(f"❌ Failed to close: {pos.symbol}")
-            
-            if closed_both:
-                print(f"closed BOTH positions (same strike, price doubled: {p1.mark_price} vs {p2.mark_price})")
-                
-                # Now sell two puts at nearest strike to market price
-                print("🔄 Now selling two puts at nearest strike to market price")
-                
-                # Get market price (spot price)
-                spot_price = self._get_spot_price()
-                print(f"📈 Current spot price: {spot_price}")
-                
-                if spot_price > 0:
-                    # Find nearest strike price
-                    nearest_strike = self._find_nearest_strike(tickers, spot_price)
-                    print(f"🎯 Nearest strike to spot: {nearest_strike}")
+            if len(open_positions) == 2:
+                print("same strike check::::::::::",open_positions)
+                if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
+                    # Get current prices for both positions
+                    p1, p2 = open_positions[0], open_positions[1]
                     
-                    if nearest_strike:
-                        # Find call and put options at this strike
-                        call_at_strike = next(
-                            (t for t in tickers if t.get("contract_type") == "call_options" and 
-                                float(t.get("strike_price", 0)) == nearest_strike),
-                            None
-                        )
-                        put_at_strike = next(
-                            (t for t in tickers if t.get("contract_type") == "put_options" and 
-                                float(t.get("strike_price", 0)) == nearest_strike),
-                            None
-                        )
+                    match1 = next((t for t in tickers if t.get("symbol") == p1.symbol), None)
+                    match2 = next((t for t in tickers if t.get("symbol") == p2.symbol), None)
+                    print("match1::::::::::",match1)
+                    print("match2::::::::::",match2)
+
+                    price1 = float(match1.get("mark_price", 0)) if match1 else float(p1.mark_price or 0)
+                    price2 = float(match2.get("mark_price", 0)) if match2 else float(p2.mark_price or 0)
+                    
+                    self.log(f"📊 Same strike detected: {p1.symbol} price={price1}, {p2.symbol} price={price2}")
+                    
+                    # Check if one price is double the other
+                    if (price1 >= 2 * price2 and price2 > 0) or (price2 >= 2 * price1 and price1 > 0):
+                        self.log(f"⚠️ Price doubled condition met - closing BOTH positions")
                         
-                        print(f"call_at_strike: {call_at_strike}")
-                        print(f"put_at_strike: {put_at_strike}")
-                        
-                        if call_at_strike and put_at_strike:
-                            # Sell call
-                            sell_result_call = self._sell_option(call_at_strike, cycle_id)
-                            # Sell put
-                            sell_result_put = self._sell_option(put_at_strike, cycle_id)
-                            
-                            if sell_result_call["success"] and sell_result_put["success"]:
-                                print(f"sold call and put at strike {nearest_strike}")
-                                print(f"✅ Sold call and put at strike {nearest_strike}")
+                        # Close both positions
+                        closed_both = True
+                        for pos in [p1, p2]:
+                            close_body = {
+                                "product_symbol": pos.symbol,
+                                "size": pos.size,
+                                "side": "buy",
+                                "order_type": "market_order"
+                            }
+                            close_response = self.client.place_order(body=close_body)
+                            print("close_response::::::::::", close_response)
+                            if close_response.get("success"):
+                                pos.active = False
+                                pos.closed_at = timezone.now()
+                                pos.save()
+                                self.log(f"✅ Closed: {pos.symbol}")
                             else:
-                                print(f"⚠️ Failed to sell call/put at strike {nearest_strike}")
-                        else:
-                            print(f"⚠️ Call or Put not found at strike {nearest_strike}")
+                                closed_both = False
+                                self.log(f"❌ Failed to close: {pos.symbol}")
+                        
+                        if closed_both:
+                            actions.append(f"closed BOTH positions (same strike, price doubled: {price1} vs {price2})")
+                            
+                            # Now sell two puts at nearest strike to market price
+                            self.log("🔄 Now selling two puts at nearest strike to market price")
+                            
+                            # Get market price (spot price)
+                            spot_price = self._get_spot_price()
+                            self.log(f"📈 Current spot price: {spot_price}")
+                            
+                            if spot_price > 0:
+                                # Find nearest strike price
+                                nearest_strike = self._find_nearest_strike(tickers, spot_price)
+                                self.log(f"🎯 Nearest strike to spot: {nearest_strike}")
+                                
+                                if nearest_strike:
+                                    # Find call and put options at this strike
+                                    call_at_strike = next(
+                                        (t for t in tickers if t.get("contract_type") == "call_options" and 
+                                         float(t.get("strike_price", 0)) == nearest_strike),
+                                        None
+                                    )
+                                    put_at_strike = next(
+                                        (t for t in tickers if t.get("contract_type") == "put_options" and 
+                                         float(t.get("strike_price", 0)) == nearest_strike),
+                                        None
+                                    )
+                                    
+                                    self.log(f"call_at_strike: {call_at_strike}")
+                                    self.log(f"put_at_strike: {put_at_strike}")
+                                    
+                                    if call_at_strike and put_at_strike:
+                                        # Sell call
+                                        sell_result_call = self._sell_option(call_at_strike, cycle_id)
+                                        # Sell put
+                                        sell_result_put = self._sell_option(put_at_strike, cycle_id)
+                                        
+                                        if sell_result_call["success"] and sell_result_put["success"]:
+                                            actions.append(f"sold call and put at strike {nearest_strike}")
+                                            self.log(f"✅ Sold call and put at strike {nearest_strike}")
+                                        else:
+                                            self.log(f"⚠️ Failed to sell call/put at strike {nearest_strike}")
+                                    else:
+                                        self.log(f"⚠️ Call or Put not found at strike {nearest_strike}")
+                                else:
+                                    self.log("⚠️ Could not find nearest strike")
+                            else:
+                                self.log("⚠️ Could not get spot price")
+                            
+                            return {
+                                "success": True,
+                                "action": "rebalanced",
+                                "reason": "Same strike price - one side doubled, reopened with call and put",
+                                "positions_closed": 2,
+                                "positions_opened": 2
+                            }
                     else:
-                        print("⚠️ Could not find nearest strike")
+                        self.log(f"✅ Same strike but price not doubled yet, continuing monitoring")
+                        return {
+                            "success": True,
+                            "action": "no_action",
+                            "reason": "Same strike price but no doubling yet"
+                        }
                 else:
-                    print("⚠️ Could not get spot price")
-                
-                return Response({
-                    "success": True,
-                    "action": "rebalanced",
-                    "reason": "Same strike price - one side doubled, reopened with call and put",
-                    "positions_closed": 2,
-                    "positions_opened": 2
-                })
+                    self.log("✅ Both positions have different strikes, continuing monitoring")
+                    return {
+                        "success": True,
+                        "action": "no_action",
+                        "reason": "Different strike prices"
+                    }
         except Exception as e:
             trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
             print(f"❌ Test strangel error: {e}")
-            return Response({"success": False, "error": str(e), "traceback": trace_log})
+            return {"success": False, "error": str(e), "traceback": trace_log}
         
     def _get_spot_price(self) -> float:
         """Get current spot price of the underlying"""

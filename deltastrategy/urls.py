@@ -23,6 +23,9 @@ urlpatterns = [
     path('', views.home_view, name='home'),
     path('admin/', admin.site.urls),
     
+    # Health check endpoint (no authentication required)
+    path('api/health/', views.health_check, name='health-check'),
+    
     # Clean Strategy APIs - Only 3 endpoints needed
     path('api/start/', StartStrategyView.as_view(), name='start-strategy'),
     path('api/monitor/', MonitorStrategyView.as_view(), name='monitor-strategy'),

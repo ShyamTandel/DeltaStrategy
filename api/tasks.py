@@ -1,7 +1,7 @@
 from celery import shared_task
 from django.utils import timezone
 from api.delta_client import DeltaClient
-from api.strategy import MonthlyStrategy
+from api.strategy import MonthlyStrategy, TestStrangel
 import logging
 from datetime import datetime
 
@@ -47,10 +47,13 @@ def periodic_adjustment_check(target_profit_percentage=80.0):
     
     try:
         # Main adjustment logic
-        strategy = MonthlyStrategy()
-        result = strategy.monitor_and_adjust(target_profit_percentage)
+        # strategy = MonthlyStrategy()
+        # result = strategy.monitor_and_adjust(target_profit_percentage)
+        # logger.info(f"📊 Adjustment check result: {result}")
+        strategy = TestStrangel()
+        result = strategy.stradel()
         logger.info(f"📊 Adjustment check result: {result}")
-        
+
         return {
             'timestamp': timestamp,
             'adjustment_result': result,
