@@ -8,7 +8,7 @@ on:
       - dev-api
 
 env:
-  IMAGE_NAME: shyamtandel/deltastrategy  # Update with your Docker Hub username
+  IMAGE_NAME: ShyamTandel/DeltaStrategy
   STACK_NAME: deltastrategy
 
 jobs:
