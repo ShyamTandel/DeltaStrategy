@@ -2,10 +2,6 @@ name: Deploy to Production
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-      - dev-api
 
 env:
   IMAGE_NAME: shyamtandel/deltastrategy
