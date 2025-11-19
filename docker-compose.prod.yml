@@ -54,6 +54,25 @@ services:
         condition: service_healthy
     restart: always
 
+  celery-beat:
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
+    container_name: deltastrategy_celery_beat
+    command: celery -A deltastrategy beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - deltastrategy_network
+    depends_on:
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: always
+
 networks:
   deltastrategy_network:
     driver: bridge
