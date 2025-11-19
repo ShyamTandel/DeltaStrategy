@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 env:
-  IMAGE_NAME: shyamtandel/deltastrategy
+  IMAGE_NAME: shyamtandeldev/deltastrategy
   STACK_NAME: deltastrategy
 
 jobs:
