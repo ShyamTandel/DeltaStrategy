@@ -1,41 +1,16 @@
 version: '3.8'
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: deltastrategy_mysql_prod
-    env_file:
-      - .env
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_prod_data:/var/lib/mysql
-    networks:
-      - deltastrategy_prod_network
-    restart: always
-    command: --default-authentication-plugin=mysql_native_password --max-connections=500
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-
   redis:
     image: redis:7-alpine
-    container_name: deltastrategy_redis_prod
-    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    container_name: deltastrategy_redis
+    command: redis-server --appendonly yes
     ports:
       - "6379:6379"
     volumes:
-      - redis_prod_data:/data
+      - redis_data:/data
     networks:
-      - deltastrategy_prod_network
+      - deltastrategy_network
     restart: always
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -44,94 +19,44 @@ services:
       retries: 5
 
   web:
-    build:
-      context: .
-      dockerfile: Dockerfile.prod
-    container_name: deltastrategy_web_prod
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
+    container_name: deltastrategy_web
     env_file:
       - .env
     environment:
-      - DB_HOST=mysql
       - CELERY_BROKER_URL=redis://redis:6379/0
     ports:
       - "8000:8000"
     volumes:
       - ./logs:/app/logs
       - ./staticfiles:/app/staticfiles
-      - ./media:/app/media
     networks:
-      - deltastrategy_prod_network
+      - deltastrategy_network
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
         condition: service_healthy
     restart: always
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
 
-  celery_worker:
-    build:
-      context: .
-      dockerfile: Dockerfile.prod
-    container_name: deltastrategy_celery_worker_prod
-    command: celery -A deltastrategy worker --loglevel=info --concurrency=4 --queues=celery,monitoring,strategy,emergency --max-tasks-per-child=1000
+  celery:
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
+    container_name: deltastrategy_celery
+    command: celery -A deltastrategy worker --loglevel=info --concurrency=4
     env_file:
       - .env
     environment:
-      - DB_HOST=mysql
       - CELERY_BROKER_URL=redis://redis:6379/0
     volumes:
       - ./logs:/app/logs
     networks:
-      - deltastrategy_prod_network
+      - deltastrategy_network
     depends_on:
-      mysql:
-        condition: service_healthy
       redis:
-        condition: service_healthy
-    restart: always
-    healthcheck:
-      test: ["CMD-SHELL", "celery -A deltastrategy inspect ping -d celery@$$HOSTNAME"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-
-  celery_beat:
-    build:
-      context: .
-      dockerfile: Dockerfile.prod
-    container_name: deltastrategy_celery_beat_prod
-    command: celery -A deltastrategy beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-    env_file:
-      - .env
-    environment:
-      - DB_HOST=mysql
-      - CELERY_BROKER_URL=redis://redis:6379/0
-    volumes:
-      - ./logs:/app/logs
-    networks:
-      - deltastrategy_prod_network
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      web:
         condition: service_healthy
     restart: always
 
 networks:
-  deltastrategy_prod_network:
+  deltastrategy_network:
     driver: bridge
 
 volumes:
-  mysql_prod_data:
-    driver: local
-  redis_prod_data:
-    driver: local
+  redis_data:

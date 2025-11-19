@@ -1,15 +1,10 @@
 # Production Dockerfile for Delta Strategy
-# Multi-stage build for optimized image size
-
-# Stage 1: Base image with dependencies
-FROM python:3.10.11-slim as base
+FROM python:3.10.11-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    DEBIAN_FRONTEND=noninteractive
 
 # Set work directory
 WORKDIR /app
@@ -24,66 +19,34 @@ RUN apt-get update \
         python3-dev \
         curl \
         procps \
-        netcat-traditional \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Stage 2: Dependencies installation
-FROM base as dependencies
-
-# Copy requirements first to leverage Docker cache
+# Copy and install Python dependencies
 COPY requirements.txt /app/
-
-# Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt \
-    && pip install --no-cache-dir gunicorn==21.2.0 gevent==23.9.1
-
-# Stage 3: Production image
-FROM base as production
-
-# Copy installed packages from dependencies stage
-COPY --from=dependencies /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
-COPY --from=dependencies /usr/local/bin /usr/local/bin
-
-# Create non-root user for security
-RUN useradd --create-home --shell /bin/bash --uid 1000 appuser \
-    && mkdir -p /app/logs /app/staticfiles /app/media \
-    && chown -R appuser:appuser /app
+    && pip install --no-cache-dir gunicorn
 
 # Copy project files
-COPY --chown=appuser:appuser . /app/
+COPY . /app/
 
-# Copy production entrypoint
-COPY --chown=appuser:appuser docker/entrypoint.prod.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Create necessary directories
+RUN mkdir -p /app/logs /app/staticfiles
+
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser \
+    && chown -R appuser:appuser /app
 
 # Switch to non-root user
 USER appuser
 
-# Collect static files (will be re-run in entrypoint with production settings)
+# Collect static files
 RUN python manage.py collectstatic --noinput --clear || true
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/api/health/ || exit 1
 
 # Expose port
 EXPOSE 8000
 
-# Use entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
+# Run gunicorn
+CMD ["gunicorn", "deltastrategy.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]
 
-# Default command to run gunicorn
-CMD ["gunicorn", "deltastrategy.wsgi:application", \
-     "--bind", "0.0.0.0:8000", \
-     "--workers", "4", \
-     "--worker-class", "gevent", \
-     "--worker-connections", "1000", \
-     "--max-requests", "1000", \
-     "--max-requests-jitter", "100", \
-     "--timeout", "60", \
-     "--keep-alive", "5", \
-     "--access-logfile", "/app/logs/gunicorn-access.log", \
-     "--error-logfile", "/app/logs/gunicorn-error.log", \
-     "--log-level", "info"]
