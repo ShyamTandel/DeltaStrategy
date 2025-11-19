@@ -1,0 +1,121 @@
+version: '3.8'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: deltastrategy_mysql_staging
+    env_file:
+      - .env.staging
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3307:3306"
+    volumes:
+      - mysql_staging_data:/var/lib/mysql
+    networks:
+      - deltastrategy_staging_network
+    restart: unless-stopped
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: deltastrategy_redis_staging
+    command: redis-server --appendonly yes
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_staging_data:/data
+    networks:
+      - deltastrategy_staging_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: deltastrategy_web_staging
+    env_file:
+      - .env.staging
+    environment:
+      - DB_HOST=mysql
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./logs:/app/logs
+      - ./staticfiles:/app/staticfiles
+    networks:
+      - deltastrategy_staging_network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: deltastrategy_celery_worker_staging
+    command: celery -A deltastrategy worker --loglevel=debug --concurrency=2 --queues=celery,monitoring,strategy,emergency
+    env_file:
+      - .env.staging
+    environment:
+      - DB_HOST=mysql
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - deltastrategy_staging_network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: deltastrategy_celery_beat_staging
+    command: celery -A deltastrategy beat --loglevel=debug --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file:
+      - .env.staging
+    environment:
+      - DB_HOST=mysql
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - deltastrategy_staging_network
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  deltastrategy_staging_network:
+    driver: bridge
+
+volumes:
+  mysql_staging_data:
+    driver: local
+  redis_staging_data:
+    driver: local
