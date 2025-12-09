@@ -72,7 +72,7 @@ htmlcov/
 .tox/
 
 # Secret files
-*.pem
+# *.pem
 *.key
 *.cert
 *.crt
