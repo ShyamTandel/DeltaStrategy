@@ -47,11 +47,11 @@ def periodic_adjustment_check(target_profit_percentage=80.0):
     
     try:
         # Main adjustment logic
-        # strategy = MonthlyStrategy()
-        # result = strategy.monitor_and_adjust(target_profit_percentage)
-        # logger.info(f"📊 Adjustment check result: {result}")
-        strategy = TestStrangel()
-        result = strategy.stradel()
+        strategy = MonthlyStrategy()
+        result = strategy.monitor_and_adjust(target_profit_percentage)
+        logger.info(f"📊 Adjustment check result: {result}")
+        # strategy = TestStrangel()
+        # result = strategy.stradel()
         logger.info(f"📊 Adjustment check result: {result}")
 
         return {
