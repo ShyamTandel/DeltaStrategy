@@ -27,7 +27,7 @@ jobs:
       uses: docker/build-push-action@v5
       with:
         context: .
-        file: ./Dockerfile.prod
+        file: ./Dockerfile
         push: true
         tags: ${{ env.IMAGE_NAME }}:latest,${{ env.IMAGE_NAME }}:${{ github.sha }}
         cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
@@ -54,18 +54,18 @@ jobs:
           docker pull ${{ env.IMAGE_NAME }}:latest
           
           echo "Stopping existing containers..."
-          docker-compose -f docker-compose.prod.yml down
+          docker-compose down
           
           echo "Starting new containers..."
           export IMAGE_NAME=${{ env.IMAGE_NAME }}
-          docker-compose -f docker-compose.prod.yml pull
-          docker-compose -f docker-compose.prod.yml up -d
+          docker-compose pull
+          docker-compose up -d
           
           echo "Running migrations..."
-          docker-compose -f docker-compose.prod.yml exec -T web python manage.py migrate
+          docker-compose exec -T web python manage.py migrate
           
           echo "Collecting static files..."
-          docker-compose -f docker-compose.prod.yml exec -T web python manage.py collectstatic --noinput
+          docker-compose exec -T web python manage.py collectstatic --noinput
           
           echo "Cleaning up unused Docker resources..."
           docker system prune -f

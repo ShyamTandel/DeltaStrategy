@@ -1,10 +1,10 @@
-# Use Python 3.10.11 slim image
+# Production Dockerfile for Delta Strategy
 FROM python:3.10.11-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 # Set work directory
 WORKDIR /app
@@ -17,43 +17,35 @@ RUN apt-get update \
         pkg-config \
         gcc \
         python3-dev \
-        redis-server \
-        supervisor \
         curl \
         procps \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
+# Copy and install Python dependencies
 COPY requirements.txt /app/
-
-# Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r requirements.txt
+    && pip install --no-cache-dir -r requirements.txt \
+    && pip install --no-cache-dir gunicorn
 
 # Copy project files
 COPY . /app/
 
-# Create directories for logs and supervisor
-RUN mkdir -p /app/logs /var/log/supervisor /etc/supervisor/conf.d
+# Create necessary directories
+RUN mkdir -p /app/logs /app/staticfiles
 
-# Copy supervisor configuration
-COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+# Create non-root user
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser \
+    && chown -R appuser:appuser /app
 
-# Copy entrypoint and startup scripts
-COPY docker/entrypoint.sh /app/entrypoint.sh
-RUN chmod +x /app/entrypoint.sh
+# Switch to non-root user
+USER appuser
 
-# Create a non-root user for security but keep some permissions
-RUN useradd --create-home --shell /bin/bash appuser \
-    && chown -R appuser:appuser /app \
-    && chown -R appuser:appuser /var/log/supervisor
+# Collect static files
+RUN python manage.py collectstatic --noinput --clear || true
 
-# Expose ports
-EXPOSE 8000 6379
+# Expose port
+EXPOSE 8000
 
-# Use entrypoint script
-ENTRYPOINT ["/app/entrypoint.sh"]
-
-# Default command to run supervisor
-CMD ["supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# Run gunicorn (can be overridden in docker-compose for celery)
+CMD ["gunicorn", "deltastrategy.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4", "--timeout", "120"]

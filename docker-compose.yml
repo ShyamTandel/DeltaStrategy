@@ -2,19 +2,43 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
     container_name: deltastrategy_web
     env_file:
       - .env
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
       - ./logs:/app/logs
       - ./staticfiles:/app/staticfiles
-    restart: unless-stopped
+    restart: always
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health/", "||", "exit", "1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/", "||", "exit", "1"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+  celery:
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
+    container_name: deltastrategy_celery
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+    command: celery -A deltastrategy worker --loglevel=info --concurrency=4
+    depends_on:
+      - web
+
+  celery-beat:
+    image: ${IMAGE_NAME:-deltastrategy-web}:latest
+    container_name: deltastrategy_celery_beat
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs
+    restart: always
+    command: celery -A deltastrategy beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    depends_on:
+      - web
+      - celery
