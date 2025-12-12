@@ -229,6 +229,11 @@ INSTALLED_APPS += [
     'django_celery_beat',
 ]
 
+# Create logs directory if it doesn't exist
+import os
+logs_dir = BASE_DIR / 'logs'
+os.makedirs(logs_dir, exist_ok=True)
+
 # Logging configuration
 LOGGING = {
     'version': 1,
@@ -274,8 +279,3 @@ LOGGING = {
         },
     },
 }
-
-# Create logs directory if it doesn't exist
-import os
-logs_dir = BASE_DIR / 'logs'
-os.makedirs(logs_dir, exist_ok=True)
