@@ -5,7 +5,8 @@ Celery configuration for DeltaStrategy project
 import os
 from celery import Celery
 from django.conf import settings
-
+import logging
+logger = logging.getLogger(__name__)
 # Set the default Django settings module for the 'celery' program.
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'deltastrategy.settings')
 
@@ -53,4 +54,4 @@ app.conf.update(
 @app.task(bind=True)
 def debug_task(self):
     """Debug task for testing Celery setup"""
-    print(f'Request: {self.request!r}')
+    logger.info(f'Request: {self.request!r}')

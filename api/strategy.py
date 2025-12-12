@@ -42,7 +42,6 @@ class MonthlyStrategy:
     def log(self, message: str):
         """Log with timestamp"""
         timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"[{timestamp}] [STRATEGY] {message}")
         logger.info(f"[{timestamp}] [STRATEGY] {message}")
     
     # ===== 1. SELL TWO INITIAL POSITIONS =====
@@ -54,7 +53,6 @@ class MonthlyStrategy:
             cycle_id = f"{current_date.year}-{current_date.month:02d}"
             
             self.log(f"🚀 Starting monthly cycle: {cycle_id}")
-            print("cycle_id::::::::::",cycle_id)
             # Store initial balance
             self._store_initial_balance(cycle_id)
             
@@ -68,23 +66,21 @@ class MonthlyStrategy:
             # Log first few options for debugging
             for i, option in enumerate(options[:3]):
                 greeks = option.get("greeks", {})
-                print("greeks::::::::",greeks)
+                self.log(f"   Option {i+1} Greeks: {greeks}")
                 delta = greeks.get("delta", "0")
                 symbol = option.get("symbol", "Unknown")
                 self.log(f"   Option {i+1}: {symbol} - Delta: {delta}")
             
             call_option = self._select_option_by_delta(options, "call")
-            print("callllllllllllllll",call_option)
+            self.log(f"   Selected call option: {call_option}")
             put_option = self._select_option_by_delta(options, "put")
-            print("putttttttttttttttttt",put_option)
+            self.log(f"   Selected put option: {put_option}")
             if not call_option or not put_option:
                 return {"success": False, "error": "Options not found in delta range"}
             
             # Sell both positions
             call_result = self._sell_option(call_option, cycle_id)
-            print("afterr callllllllllllllll")
             put_result = self._sell_option(put_option, cycle_id)
-            print("afterr putttttttttttttttttt")
             return {
                 "success": True,
                 "cycle_id": cycle_id,
@@ -112,7 +108,6 @@ class MonthlyStrategy:
             
             # Check target achieved
             target_status = self._check_target(cycle_id, target_profit_percentage)
-            print("target_status::::::::::",target_status)
             if target_status["target_achieved"]:
                 self.log("🎯 Target achieved! Closing positions")
                 return self._close_all_positions("Target achieved")
@@ -155,7 +150,6 @@ class MonthlyStrategy:
                     "open_positions": 0,
                     "target_status": target_status
                 }
-            print("open_positions::::::::::",open_positions)
             # Get current option chain tickers for price and delta comparison
             tickers = self._get_monthly_options()
             
@@ -163,7 +157,7 @@ class MonthlyStrategy:
             if len(open_positions) == 1:
                 open_pos = open_positions[0]
                 target_delta = open_pos.delta
-                print("target_delta::::::::::",target_delta)
+                self.log(f"   Target delta for matching: {target_delta}")
                 # If open position is put (negative delta), search for matching call
                 if open_pos.symbol.startswith("P-") or open_pos.delta < 0:
                     target_min = abs(target_delta) - 0.03
@@ -183,10 +177,8 @@ class MonthlyStrategy:
                             continue
                     
                     if matching:
-                        print("matching put::::::::::",matching)
                         # Sell the best matching call (step 13)
                         candidate = min(matching, key=lambda x: abs(float(x["greeks"]["delta"]) - abs(target_delta)))
-                        print("candidate put::::::::::",candidate)
                         if "C-" in candidate["symbol"]:
                             strike_price_call = float(candidate["strike_price"])
                             if open_pos.strike_price >= strike_price_call:
@@ -230,9 +222,7 @@ class MonthlyStrategy:
                             continue
                     
                     if matching:
-                        print("matching call::::::::::",matching)
                         candidate = min(matching, key=lambda x: abs(abs(float(x["greeks"]["delta"])) - abs(target_delta)))
-                        print("candidate put::::::::::",candidate)
                         if "P-" in candidate["symbol"]:
                             strike_price_put = float(candidate["strike_price"])
                             if open_pos.strike_price <= strike_price_put:
@@ -261,15 +251,12 @@ class MonthlyStrategy:
             
             # Step 14: If both positions have same strike, check if one price doubles the other
             if len(open_positions) == 2:
-                print("same strike check::::::::::",open_positions)
                 if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
                     # Get current prices for both positions
                     p1, p2 = open_positions[0], open_positions[1]
                     
                     match1 = next((t for t in tickers if t.get("symbol") == p1.symbol), None)
                     match2 = next((t for t in tickers if t.get("symbol") == p2.symbol), None)
-                    self.log("match1::::::::::",match1)
-                    self.log("match2::::::::::",match2)
 
                     price1 = float(match1.get("mark_price", 0)) if match1 else float(p1.mark_price or 0)
                     price2 = float(match2.get("mark_price", 0)) if match2 else float(p2.mark_price or 0)
@@ -290,7 +277,6 @@ class MonthlyStrategy:
                                 "order_type": "market_order"
                             }
                             close_response = self.client.place_order(body=close_body)
-                            self.log("close_response::::::::::", close_response)
                             if close_response.get("success"):
                                 pos.active = False
                                 pos.closed_at = timezone.now()
@@ -373,12 +359,8 @@ class MonthlyStrategy:
                     
                     # Compare prices between first two positions
                     p1, p2 = open_positions[0], open_positions[1]
-                    print("p1::::::::::",p1)
-                    print("p2::::::::::",p2)
                     price1 = current_prices.get(p1.id, 0)
                     price2 = current_prices.get(p2.id, 0)
-                    print("price1::::::::::",price1)
-                    print("price2::::::::::",price2)
                     # If any option price becomes double compared to other -> close the cheaper one
                     if price1 >= 2 * price2 and price2 > 0:
                         # Close p2 (the cheaper one)
@@ -432,7 +414,7 @@ class MonthlyStrategy:
             #         to_close = open_positions[0]  # Close the put
                 
             #     if strikes_crossed and to_close:
-            #         print("Strikes crossed, closing position::::::::::",to_close)
+            #         self.log("Strikes crossed, closing position::::::::::",to_close)
             #         close_body = {
             #             "product_symbol": to_close.symbol,
             #             "size": to_close.size,
@@ -468,22 +450,22 @@ class MonthlyStrategy:
             # Get initial balance
             tracker = InitialBalanceTracker.objects.get(cycle_id=cycle_id)
             initial_balance = float(tracker.initial_balance_usd)
-            print("initial_balance::::::::::",initial_balance)
+            self.log(f"Initial balance: {initial_balance}")
             # Get current balance
             current_balance = self._get_current_balance()
-            print("current_balance::::::::::",current_balance)
+            self.log(f"Current balance: {current_balance}")
             live_positions = self.client.get_positions()
-            print("live_positions::::::::::",live_positions)
+            self.log(f"Live positions: {live_positions}")
             if live_positions.get("success"):
                 positions = live_positions.get("result", [])
                 realized_cashflow = sum(float(p.get("realized_cashflow", 0)) for p in positions)
-                print("realized_cashflow::::::::::",realized_cashflow)
+                self.log(f"Realized cashflow: {realized_cashflow}")
             current_balance_without_cashflow = current_balance - realized_cashflow
             # Calculate target
             target_balance = initial_balance * (1 + target_profit_percentage / 100)
             target_achieved = current_balance_without_cashflow >= target_balance
-            print("target_balance::::::::::",target_balance)
-            print("target_achieved::::::::::",target_achieved)
+            self.log(f"Target balance: {target_balance}")
+            self.log(f"Target achieved: {target_achieved}")
             return {
                 "initial_balance": initial_balance,
                 "current_balance": current_balance,
@@ -518,17 +500,17 @@ class MonthlyStrategy:
     def _store_initial_balance(self, cycle_id: str):
         """Store initial USD balance"""
         current_balance = self._get_current_balance()
-        print("current_balance::::::::::",current_balance)
+        self.log(f"Current balance: {current_balance}")
         # Get INR equivalent
         wallet_response = self.client.get_wallet_balances()
-        print("wallet_response::::::::::",wallet_response)
+        self.log(f"Wallet response: {wallet_response}")
         inr_equivalent = 0.0
         if wallet_response.get("success"):
             balances = wallet_response.get("result", [])  # Fixed: removed .get("data", {})
             for balance in balances:
                 if "balance_inr" in balance:
                     inr_equivalent = float(balance.get("balance_inr", 0))
-                    print("inr_equivalent::::::::::",inr_equivalent)
+                    self.log(f"INR equivalent: {inr_equivalent}")
                     break
         
         InitialBalanceTracker.objects.update_or_create(
@@ -545,13 +527,11 @@ class MonthlyStrategy:
         """Get current USD balance"""
         try:
             wallet_response = self.client.get_wallet_balances()
-            print("wallet_response::::::::::",wallet_response)
             if wallet_response.get("success") == True:
                 balances = wallet_response.get("result", [])  # Fixed: removed .get("data", {})
-                print("balances::::::::::",balances)
                 for balance in balances:
                     if balance.get("asset_symbol", "").upper() == "USD":
-                        print("USD balance found::::::::::", balance.get("balance", 0))
+                        self.log(f"USD balance found: {balance.get('balance', 0)}")
                         return float(balance.get("balance", 0))
             return 0.0
         except Exception:
@@ -571,12 +551,9 @@ class MonthlyStrategy:
             # Get ticker info for the underlying
             tickers = self._get_monthly_options()
             if tickers and len(tickers) > 0:
-                print("tickers::::::::::", tickers)
-                print("first tickers::::::::::", tickers[0])
-
                 # Spot price is typically available in the first ticker
                 spot_price = float(tickers[0].get("spot_price", 0))
-                print("spot_price::::::::::", spot_price)
+                self.log(f"Spot price: {spot_price}")
                 if spot_price > 0:
                     return spot_price
                 
@@ -604,7 +581,7 @@ class MonthlyStrategy:
             
             # Find nearest strike to spot price
             nearest = min(strikes, key=lambda x: abs(x - spot_price))
-            print("nearest strike::::::::::", nearest)
+            self.log(f"Nearest strike: {nearest}")
             return nearest
         except Exception as e:
             self.log(f"⚠️ Error finding nearest strike: {e}")
@@ -625,7 +602,7 @@ class MonthlyStrategy:
             self.log(f"⚠️ Invalid option type: {option_type}")
             return None
 
-        print(f"delta_range for {option_type}: {delta_range}")
+        self.log(f"delta_range for {option_type}: {delta_range}")
         filtered = []
 
         for option in options:
@@ -661,7 +638,7 @@ class MonthlyStrategy:
         """Sell option and store in database"""
         try:
             # Place sell order
-            print("option::::::::::",option)
+            self.log(f"Option to sell: {option}")
             order_body = {
                 "product_symbol": option["symbol"],
                 "size": self.size,
@@ -669,7 +646,6 @@ class MonthlyStrategy:
                 "order_type": "market_order"
             }
             order_response = self.client.place_order(body=order_body)
-            print("order_response::::::::::",order_response)
             if order_response.get("success"):
                 # Extract delta from greeks
                 greeks = option.get("greeks", {})
@@ -742,7 +718,6 @@ class MonthlyStrategy:
                     "order_type": "market_order"
                 }
                 close_response = self.client.place_order(body=close_body)
-                print("close_response::::::::::",close_response)
                 if close_response.get("success"):
                     position.active = False
                     position.closed_at = timezone.now()
@@ -824,7 +799,6 @@ class TestStrangel(APIView):
     def log(self, message: str):
         """Log with timestamp"""
         timestamp = timezone.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-        print(f"[{timestamp}] [STRATEGY] {message}")
         logger.info(f"[{timestamp}] [STRATEGY] {message}")
 
     def post(self, request):
@@ -900,7 +874,6 @@ class TestStrangel(APIView):
                 })
         except Exception as e:
             trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
-            print(f"❌ Test strangel error: {e}")
             return Response({"success": False, "error": str(e), "traceback": trace_log})
         
 
@@ -920,15 +893,12 @@ class TestStrangel(APIView):
                     "reason": "Need at least 2 open positions to test strangel logic"
                 }
             if len(open_positions) == 2:
-                print("same strike check::::::::::",open_positions)
                 if float(open_positions[0].strike_price) == float(open_positions[1].strike_price):
                     # Get current prices for both positions
                     p1, p2 = open_positions[0], open_positions[1]
                     
                     match1 = next((t for t in tickers if t.get("symbol") == p1.symbol), None)
                     match2 = next((t for t in tickers if t.get("symbol") == p2.symbol), None)
-                    print("match1::::::::::",match1)
-                    print("match2::::::::::",match2)
 
                     price1 = float(match1.get("mark_price", 0)) if match1 else float(p1.mark_price or 0)
                     price2 = float(match2.get("mark_price", 0)) if match2 else float(p2.mark_price or 0)
@@ -949,7 +919,6 @@ class TestStrangel(APIView):
                                 "order_type": "market_order"
                             }
                             close_response = self.client.place_order(body=close_body)
-                            print("close_response::::::::::", close_response)
                             if close_response.get("success"):
                                 pos.active = False
                                 pos.closed_at = timezone.now()
@@ -1031,7 +1000,6 @@ class TestStrangel(APIView):
                     }
         except Exception as e:
             trace_log = ''.join(traceback.format_exception(None, e, e.__traceback__))
-            print(f"❌ Test strangel error: {e}")
             return {"success": False, "error": str(e), "traceback": trace_log}
         
     def _get_spot_price(self) -> float:
@@ -1040,12 +1008,9 @@ class TestStrangel(APIView):
             # Get ticker info for the underlying
             tickers = strategy._get_monthly_options()
             if tickers and len(tickers) > 0:
-                print("tickers::::::::::", tickers)
-                print("first tickers::::::::::", tickers[0])
 
                 # Spot price is typically available in the first ticker
                 spot_price = float(tickers[0].get("spot_price", 0))
-                print("spot_price::::::::::", spot_price)
                 if spot_price > 0:
                     return spot_price
                 
@@ -1055,7 +1020,7 @@ class TestStrangel(APIView):
                         return float(ticker.get("underlying_price", 0))
             return 0.0
         except Exception as e:
-            print(f"⚠️ Error getting spot price: {e}")
+            self.log(f"⚠️ Error getting spot price: {e}")
             return 0.0
     
     def _find_nearest_strike(self, tickers: List[Dict], spot_price: float) -> float:
@@ -1073,10 +1038,9 @@ class TestStrangel(APIView):
             
             # Find nearest strike to spot price
             nearest = min(strikes, key=lambda x: abs(x - spot_price))
-            print("nearest strike::::::::::", nearest)
             return nearest
         except Exception as e:
-            print(f"⚠️ Error finding nearest strike: {e}")
+            self.log(f"⚠️ Error finding nearest strike: {e}")
             return 0.0
 
     def _sell_option(self, option: Dict, cycle_id: str) -> Dict:
@@ -1084,7 +1048,6 @@ class TestStrangel(APIView):
         try:
             client = DeltaClient()
             # Place sell order
-            print("option::::::::::",option)
             order_body = {
                 "product_symbol": option["symbol"],
                 "size": self.size,
@@ -1092,7 +1055,6 @@ class TestStrangel(APIView):
                 "order_type": "market_order"
             }
             order_response = client.place_order(body=order_body)
-            print("order_response::::::::::",order_response)
             if order_response.get("success"):
                 # Extract delta from greeks
                 greeks = option.get("greeks", {})
@@ -1135,18 +1097,18 @@ class TestStrangel(APIView):
                     remote_order_id=order_response.get("result", {}).get("id")
                 )
                 
-                print(f"✅ Sold: {option['symbol']} (δ={delta_value:.3f})")
+                self.log(f"✅ Sold: {option['symbol']} (δ={delta_value:.3f})")
                 return {"success": True}
             
             return {"success": False, "error": "Order failed"}
             
         except ValueError as e:
-            print(f"⚠️ Value error: {e}")
+            self.log(f"⚠️ Value error: {e}")
             return {"success": False, "error_type": "ValueError", "error": str(e)}
 
         except Exception as e:
             tb = traceback.format_exc()
-            print(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
+            self.log(f"❌ Unexpected error: {e}\nTraceback:\n{tb}")
             return {"success": False, "error_type": "Exception", "error": str(e), "traceback": tb}
     
 class CloseAllPositionsView(APIView):

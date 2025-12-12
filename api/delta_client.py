@@ -6,7 +6,8 @@ import json
 import requests
 from urllib.parse import urlencode
 from django.conf import settings
-
+import logging
+logger = logging.getLogger(__name__)
 # Configure BASE in settings as WITHOUT the /v2 suffix:
 # DELTA_API_BASE = "https://cdn-ind.testnet.deltaex.org"
 API_KEY = settings.DELTA_API_KEY
@@ -63,7 +64,7 @@ class DeltaClient:
                         if server_time and request_time:
                             self._server_offset = server_time - request_time
                             if self.debug:
-                                print(f"🕐 Detected server time offset: {self._server_offset} seconds")
+                                logger.info(f"🕐 Detected server time offset: {self._server_offset} seconds")
                             return self._server_offset
                 except:
                     pass
@@ -74,7 +75,7 @@ class DeltaClient:
         # Fallback to known offset from your error logs
         self._server_offset = 19800  # 5.5 hours based on your logs
         if self.debug:
-            print(f"🕐 Using fallback server time offset: {self._server_offset} seconds")
+            logger.info(f"🕐 Using fallback server time offset: {self._server_offset} seconds")
         return self._server_offset
 
     def _timestamp(self):
@@ -116,15 +117,15 @@ class DeltaClient:
         ).hexdigest()
 
         if self.debug:
-            print("=== SIGN DEBUG ===")
-            print("method:", method)
-            print("timestamp:", timestamp)
-            print("path:", request_path)
-            print("querystring:", querystring)
-            print("body_str:", body_str)
-            print("prehash:", prehash)
-            print("signature:", sig)
-            print("=================")
+            logger.info("=== SIGN DEBUG ===")
+            logger.info("method:", method)
+            logger.info("timestamp:", timestamp)
+            logger.info("path:", request_path)
+            logger.info("querystring:", querystring)
+            logger.info("body_str:", body_str)
+            logger.info("prehash:", prehash)
+            logger.info("signature:", sig)
+            logger.info("=================")
 
         return sig
 
@@ -156,7 +157,7 @@ class DeltaClient:
             raise ValueError(f"Unsupported HTTP method: {method}")
 
         if self.debug or response.status_code >= 400:
-            print(f"[{response.status_code}] {response.text}")
+            logger.info(f"[{response.status_code}] {response.text}")
 
         response.raise_for_status()
         return response.json()
@@ -178,7 +179,7 @@ class DeltaClient:
 
         url = self.base + path
         if self.debug:
-            print("GET", url, "params=", params)
+            logger.info("GET", url, "params=", params)
         r = requests.get(url, params=params, headers={"Accept": "application/json"})
         r.raise_for_status()
         return r.json()
@@ -221,24 +222,24 @@ class DeltaClient:
                 url = self.base + path
                 headers = self._headers("GET", endpoint)
                 
-                print(f"Testing endpoint: {endpoint}")
-                print(f"URL: {url}")
+                logger.info(f"Testing endpoint: {endpoint}")
+                logger.info(f"URL: {url}")
                 if self.debug:
-                    print(f"Headers: {headers}")
+                    logger.info(f"Headers: {headers}")
                 
                 r = requests.get(url, headers=headers)
-                print(f"Response: {r.status_code}")
+                logger.info(f"Response: {r.status_code}")
                 
                 if r.status_code == 200:
-                    print(f"✅ Authentication successful with {endpoint}")
+                    logger.info(f"✅ Authentication successful with {endpoint}")
                     return r.json()
                 elif r.status_code == 401:
-                    print(f"❌ Authentication failed (401) with {endpoint}")
+                    logger.info(f"❌ Authentication failed (401) with {endpoint}")
                 else:
-                    print(f"⚠️ Endpoint {endpoint} returned {r.status_code}: {r.text[:100]}")
+                    logger.info(f"⚠️ Endpoint {endpoint} returned {r.status_code}: {r.text[:100]}")
                     
             except Exception as e:
-                print(f"Error testing {endpoint}: {e}")
+                logger.info(f"Error testing {endpoint}: {e}")
         
         return None
 
