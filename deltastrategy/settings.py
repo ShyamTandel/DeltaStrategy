@@ -172,12 +172,8 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
-
+CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
-
-# For development only - disable in production
-CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True').lower() == 'true' if DEBUG else False
 
 DELTA_API_KEY = os.getenv("DELTA_API_KEY")
 DELTA_API_SECRET = os.getenv("DELTA_API_SECRET")
@@ -185,8 +181,6 @@ DELTA_API_BASE = os.getenv("DELTA_API_BASE")
 
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = 'django-db'  # Store results in Django database
-CELERY_CACHE_BACKEND = 'django-cache'
 
 # Celery task configuration
 CELERY_TASK_SERIALIZER = 'json'
@@ -230,10 +224,9 @@ CELERY_TASK_TIME_LIMIT = 600       # 10 minutes hard limit
 CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(message)s'
 CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
 
-# Add django-celery-beat and django-celery-results to installed apps
+# Add django-celery-beat to installed apps
 INSTALLED_APPS += [
     'django_celery_beat',
-    'django_celery_results',
 ]
 
 # Logging configuration
