@@ -52,7 +52,7 @@ def periodic_adjustment_check(target_profit_percentage=80.0):
         logger.info(f"📊 Adjustment check result: {result}")
         # strategy = TestStrangel()
         # result = strategy.stradel()
-        logger.info(f"📊 Adjustment check result: {result}")
+        # logger.info(f"📊 Adjustment check result: {result}")
 
         return {
             'timestamp': timestamp,
