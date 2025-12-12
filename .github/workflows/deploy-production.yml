@@ -68,9 +68,7 @@ jobs:
           DB_PORT=${{ secrets.DB_PORT }}
           DB_PEM=/var/www/app/ca.pem
           
-          CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}
-          
-          CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
+          CELERY_BROKER_URL=${{ secrets.CELERY_BROKER_URL }}          
           EOF
           
           echo "Creating ca.pem file from GitHub secret..."
