@@ -103,7 +103,7 @@ DATABASES = {
             'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
             'charset': 'utf8mb4',
             'ssl': {
-                'ca': os.path.join(BASE_DIR, os.getenv('DB_PEM'))
+                'ca': os.getenv('DB_PEM')
             }
         },
         'CONN_MAX_AGE': 60,
