@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
 
-    def __init__(self, underlying: str = "BTC", date: str = "17-11-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "15-12-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
