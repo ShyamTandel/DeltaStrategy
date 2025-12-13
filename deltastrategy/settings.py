@@ -227,7 +227,11 @@ CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(
 # Add django-celery-beat to installed apps
 INSTALLED_APPS += [
     'django_celery_beat',
+    'django_celery_results',
 ]
+
+CELERY_RESULT_BACKEND = 'django-db'
+CELERY_CACHE_BACKEND = 'django-cache'
 
 # Create logs directory if it doesn't exist
 logs_dir = BASE_DIR / 'logs'
