@@ -9,6 +9,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - ./ca.pem:/app/ca.pem:ro
       - ./logs:/app/logs
       - ./staticfiles:/app/staticfiles
     restart: always
@@ -24,6 +25,7 @@ services:
     env_file:
       - .env
     volumes:
+      - ./ca.pem:/app/ca.pem:ro
       - ./logs:/app/logs
     restart: always
     command: celery -A deltastrategy worker --loglevel=info --concurrency=4
@@ -36,6 +38,7 @@ services:
     env_file:
       - .env
     volumes:
+      - ./ca.pem:/app/ca.pem:ro
       - ./logs:/app/logs
     restart: always
     command: celery -A deltastrategy beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
