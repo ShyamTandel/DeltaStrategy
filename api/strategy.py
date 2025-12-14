@@ -785,7 +785,7 @@ def monitor_strategy_task(self, target_profit_percentage=80.0):
 class TestStrangel(APIView):
     """Post /api/test-strangel/ - Test strangel logic"""
     permission_classes = [AllowAny]
-    def __init__(self, underlying: str = "BTC", date: str = "17-11-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "26-12-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
