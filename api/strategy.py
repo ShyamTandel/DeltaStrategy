@@ -185,9 +185,9 @@ class MonthlyStrategy:
                                 self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike CALL instead.")
                                 
                                 ticker_list = self._get_monthly_options()
-                                # ✅ Fetch the same strike CALL option from your 'matching' list
+                                # ✅ Fetch the same strike CALL option from the ticker list
                                 same_strike_call = next(
-                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and "C-" in opt["symbol"]),
+                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and opt.get("contract_type") == "call_options"),
                                     None
                                 )
                                 
@@ -229,9 +229,9 @@ class MonthlyStrategy:
                                 self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike PUT instead.")
                                 
                                 ticker_list = self._get_monthly_options()
-                                # ✅ Fetch the same strike PUT option from your 'matching' list
+                                # ✅ Fetch the same strike PUT option from the ticker list
                                 same_strike_put = next(
-                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and "P-" in opt["symbol"]),
+                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and opt.get("contract_type") == "put_options"),
                                     None
                                 )
                                 
