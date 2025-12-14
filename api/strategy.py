@@ -184,10 +184,10 @@ class MonthlyStrategy:
                             if open_pos.strike_price >= strike_price_call:
                                 self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike CALL instead.")
                                 
-                                ticker = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
+                                ticker_list = self._get_monthly_options()
                                 # ✅ Fetch the same strike CALL option from your 'matching' list
                                 same_strike_call = next(
-                                    (opt for opt in ticker if float(opt["strike_price"]) == open_pos.strike_price and "C-" in opt["symbol"]),
+                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and "C-" in opt["symbol"]),
                                     None
                                 )
                                 
@@ -228,10 +228,10 @@ class MonthlyStrategy:
                             if open_pos.strike_price <= strike_price_put:
                                 self.log(f"⚠️ Skipping sell of {candidate['symbol']} as strike would cross. Selling same strike PUT instead.")
                                 
-                                ticker = self.client.get_option_chain(underlying=self.underlying, expiry_date=self.date)
+                                ticker_list = self._get_monthly_options()
                                 # ✅ Fetch the same strike PUT option from your 'matching' list
                                 same_strike_put = next(
-                                    (opt for opt in ticker if float(opt["strike_price"]) == open_pos.strike_price and "P-" in opt["symbol"]),
+                                    (opt for opt in ticker_list if float(opt["strike_price"]) == open_pos.strike_price and "P-" in opt["symbol"]),
                                     None
                                 )
                                 
