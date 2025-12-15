@@ -28,16 +28,16 @@ logger = logging.getLogger(__name__)
 class MonthlyStrategy:
     """Simple monthly options strategy implementation"""
 
-    def __init__(self, underlying: str = "BTC", date: str = "26-12-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "16-12-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
 
         # Strategy parameters
         self.size = 1
-        self.call_delta_range = (0.16, 0.22)
-        self.put_delta_range = (-0.22, -0.16)
-        self.expiry_close_time = time(12, 30)  # 12:30 PM
+        self.call_delta_range = (0.22, 0.28)
+        self.put_delta_range = (-0.28, -0.22)
+        self.expiry_close_time = time(16, 00)  # 4:00 PM
     
     def log(self, message: str):
         """Log with timestamp"""
@@ -100,7 +100,7 @@ class MonthlyStrategy:
     
     # ===== 2. ADJUSTMENT LOGIC =====
     
-    def monitor_and_adjust(self, target_profit_percentage: float = 80.0) -> Dict:
+    def monitor_and_adjust(self, target_profit_percentage: float = 50.0) -> Dict:
         """Monitor positions and adjust if needed"""
         try:
             current_date = timezone.now()
@@ -160,8 +160,8 @@ class MonthlyStrategy:
                 self.log(f"   Target delta for matching: {target_delta}")
                 # If open position is put (negative delta), search for matching call
                 if open_pos.symbol.startswith("P-") or open_pos.delta < 0:
-                    target_min = abs(target_delta) - 0.03
-                    target_max = abs(target_delta) + 0.03
+                    target_min = abs(target_delta) - 0.04
+                    target_max = abs(target_delta) + 0.04
                     
                     # Find candidate calls with matching delta
                     calls = [t for t in tickers if ("C-" in t.get("symbol", "") or t.get("contract_type") == "call_options")]
@@ -206,8 +206,8 @@ class MonthlyStrategy:
                                     self.log(f"🔄 Sold matching call: {candidate['symbol']}")
                 elif open_pos.symbol.startswith("C-") or open_pos.delta > 0:
                     # Open position is call, find matching put
-                    target_min = abs(target_delta) - 0.03
-                    target_max = abs(target_delta) + 0.03
+                    target_min = abs(target_delta) - 0.04
+                    target_max = abs(target_delta) + 0.04
                     
                     puts = [t for t in tickers if ("P-" in t.get("symbol", "") or t.get("contract_type") == "put_options")]
                     matching = []
@@ -668,10 +668,10 @@ class MonthlyStrategy:
                         expiry_date = datetime(year, month, day).date()
                     else:
                         # Fallback to a default date if parsing fails
-                        expiry_date = datetime(2025, 10, 17).date()
+                        expiry_date = datetime(2025, 12, 16).date()
                 except (ValueError, IndexError):
                     # Fallback to a default date
-                    expiry_date = datetime(2025, 10, 17).date()
+                    expiry_date = datetime(2025, 12, 16).date()
                 
                 # Store in database
                 OptionPosition.objects.create(
@@ -792,9 +792,9 @@ class TestStrangel(APIView):
 
         # Strategy parameters
         self.size = 1
-        self.call_delta_range = (0.16, 0.22)
-        self.put_delta_range = (-0.22, -0.16)
-        self.expiry_close_time = time(12, 30)  # 12:30 PM
+        self.call_delta_range = (0.22, 0.28)
+        self.put_delta_range = (-0.28, -0.22)
+        self.expiry_close_time = time(16, 0)  # 4:00 PM
 
     def log(self, message: str):
         """Log with timestamp"""
@@ -1077,10 +1077,10 @@ class TestStrangel(APIView):
                         expiry_date = datetime(year, month, day).date()
                     else:
                         # Fallback to a default date if parsing fails
-                        expiry_date = datetime(2025, 10, 17).date()
+                        expiry_date = datetime(2025, 12, 16).date()
                 except (ValueError, IndexError):
                     # Fallback to a default date
-                    expiry_date = datetime(2025, 10, 17).date()
+                    expiry_date = datetime(2025, 12, 16).date()
                 
                 # Store in database
                 OptionPosition.objects.create(

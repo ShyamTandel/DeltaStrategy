@@ -37,7 +37,7 @@ def monthly_strategy_start_task():
         }
 
 @shared_task
-def periodic_adjustment_check(target_profit_percentage=80.0):
+def periodic_adjustment_check(target_profit_percentage=50.0):
     """
     Periodic task to check position adjustments every 30 seconds
     This is the main monitoring task that runs continuously
@@ -71,7 +71,7 @@ def periodic_adjustment_check(target_profit_percentage=80.0):
         }
 
 @shared_task
-def periodic_api_check(cycle_id=None, target_profit_percentage=80.0):
+def periodic_api_check(cycle_id=None, target_profit_percentage=50.0):
     """
     DEPRECATED: Legacy task - use periodic_adjustment_check instead
     Keeping for backward compatibility
