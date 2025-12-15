@@ -294,12 +294,10 @@ class MonthlyStrategy:
                             
                             # Get market price (spot price)
                             spot_price = self._get_spot_price()
-                            self.log(f"📈 Current spot price: {spot_price}")
                             
                             if spot_price > 0:
                                 # Find nearest strike price
                                 nearest_strike = self._find_nearest_strike(tickers, spot_price)
-                                self.log(f"🎯 Nearest strike to spot: {nearest_strike}")
                                 
                                 if nearest_strike:
                                     # Find call and put options at this strike
@@ -313,10 +311,7 @@ class MonthlyStrategy:
                                          float(t.get("strike_price", 0)) == nearest_strike),
                                         None
                                     )
-                                    
-                                    self.log(f"call_at_strike: {call_at_strike}")
-                                    self.log(f"put_at_strike: {put_at_strike}")
-                                    
+                                                                        
                                     if call_at_strike and put_at_strike:
                                         # Sell call
                                         sell_result_call = self._sell_option(call_at_strike, cycle_id)
@@ -455,7 +450,6 @@ class MonthlyStrategy:
             current_balance = self._get_current_balance()
             self.log(f"Current balance: {current_balance}")
             live_positions = self.client.get_positions()
-            self.log(f"Live positions: {live_positions}")
             if live_positions.get("success"):
                 positions = live_positions.get("result", [])
                 realized_cashflow = sum(float(p.get("realized_cashflow", 0)) for p in positions)
@@ -503,7 +497,6 @@ class MonthlyStrategy:
         self.log(f"Current balance: {current_balance}")
         # Get INR equivalent
         wallet_response = self.client.get_wallet_balances()
-        self.log(f"Wallet response: {wallet_response}")
         inr_equivalent = 0.0
         if wallet_response.get("success"):
             balances = wallet_response.get("result", [])  # Fixed: removed .get("data", {})
@@ -745,7 +738,7 @@ class StartStrategyView(APIView):
     permission_classes = [AllowAny]
     
     def post(self, request):
-        # target_percentage = float(request.data.get("target_profit_percentage", 80.0))
+        # target_percentage = float(request.data.get("target_profit_percentage", 50.0))
         result = strategy.start_monthly_cycle()
         return Response(result)
 
@@ -754,7 +747,7 @@ class MonitorStrategyView(APIView):
     permission_classes = [AllowAny]
     
     def post(self, request):
-        target_percentage = float(request.data.get("target_profit_percentage", 80.0))
+        target_percentage = float(request.data.get("target_profit_percentage", 50.0))
         result = strategy.monitor_and_adjust(target_percentage)
         return Response(result)
 
@@ -763,7 +756,7 @@ class StatusView(APIView):
     permission_classes = [AllowAny]
     
     def get(self, request):
-        target_percentage = float(request.GET.get("target_profit_percentage", 80.0))
+        target_percentage = float(request.GET.get("target_profit_percentage", 50.0))
         current_date = timezone.now()
         cycle_id = f"{current_date.year}-{current_date.month:02d}"
         result = strategy._check_target(cycle_id, target_percentage)
@@ -772,7 +765,7 @@ class StatusView(APIView):
 # ===== CELERY TASK =====
 
 @shared_task(bind=True)
-def monitor_strategy_task(self, target_profit_percentage=80.0):
+def monitor_strategy_task(self, target_profit_percentage=50.0):
     """Celery task - runs every 30 seconds"""
     try:
         result = strategy.monitor_and_adjust(target_profit_percentage)
@@ -785,7 +778,7 @@ def monitor_strategy_task(self, target_profit_percentage=80.0):
 class TestStrangel(APIView):
     """Post /api/test-strangel/ - Test strangel logic"""
     permission_classes = [AllowAny]
-    def __init__(self, underlying: str = "BTC", date: str = "26-12-2025"):
+    def __init__(self, underlying: str = "BTC", date: str = "16-12-2025"):
         self.underlying = underlying
         self.client = DeltaClient(debug=True)
         self.date = date
@@ -810,12 +803,10 @@ class TestStrangel(APIView):
 
             actions = []
             spot_price = self._get_spot_price()
-            self.log(f"📈 Current spot price: {spot_price}")
             
             if spot_price > 0:
                 # Find nearest strike price
                 nearest_strike = self._find_nearest_strike(tickers, spot_price)
-                self.log(f"🎯 Nearest strike to spot: {nearest_strike}")
                 
                 if nearest_strike:
                     # Find call and put options at this strike
@@ -829,10 +820,7 @@ class TestStrangel(APIView):
                             float(t.get("strike_price", 0)) == nearest_strike),
                         None
                     )
-                    
-                    self.log(f"call_at_strike: {call_at_strike}")
-                    self.log(f"put_at_strike: {put_at_strike}")
-                    
+                                        
                     if call_at_strike and put_at_strike:
                         # Sell call
                         sell_result_call = self._sell_option(call_at_strike, cycle_id)
@@ -955,10 +943,7 @@ class TestStrangel(APIView):
                                          float(t.get("strike_price", 0)) == nearest_strike),
                                         None
                                     )
-                                    
-                                    self.log(f"call_at_strike: {call_at_strike}")
-                                    self.log(f"put_at_strike: {put_at_strike}")
-                                    
+                                                                        
                                     if call_at_strike and put_at_strike:
                                         # Sell call
                                         sell_result_call = self._sell_option(call_at_strike, cycle_id)
