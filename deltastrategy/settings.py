@@ -35,10 +35,8 @@ SECURE_SSL_REDIRECT = os.getenv('SECURE_SSL_REDIRECT', 'False').lower() == 'true
 SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False').lower() == 'true'
 CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False').lower() == 'true'
 SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
-SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False').lower() == 'true'
-SECURE_HSTS_PRELOAD = os.getenv('SECURE_HSTS_PRELOAD', 'False').lower() == 'true'
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+SECURE_HSTS_PRELOAD = False
 X_FRAME_OPTIONS = 'DENY'
 
 
@@ -53,6 +51,7 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'django_celery_beat',  # ✅ KEEP ONLY THIS
     'api',
 ]
 
@@ -182,103 +181,62 @@ DELTA_API_BASE = os.getenv("DELTA_API_BASE")
 # Celery Configuration
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
 
-# Celery task configuration
-CELERY_TASK_SERIALIZER = 'json'
+# 🚫 Disable results completely (CRITICAL)
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_RESULT_BACKEND = None
+
 CELERY_ACCEPT_CONTENT = ['json']
-CELERY_RESULT_SERIALIZER = 'json'
+CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_ENABLE_UTC = True
 
-# Celery Beat Configuration (for scheduled tasks)
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-
-# Task routing for organized queue management
-CELERY_TASK_ROUTES = {
-    # Monitoring tasks (every 30 seconds)
-    'api.strategy.monitor_strategy_positions_task': {
-        'queue': 'monitoring',
-        'routing_key': 'monitoring.strategy'
-    },
-    # Strategy execution tasks (user-initiated)
-    'api.strategy.execute_strategy_background_task': {
-        'queue': 'strategy', 
-        'routing_key': 'strategy.execute'
-    },
-    # Emergency tasks (highest priority)
-    'api.strategy.emergency_close_all_task': {
-        'queue': 'emergency',
-        'routing_key': 'emergency.close'
-    },
+# Redis optimization
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 3600,
+    'polling_interval': 5.0,
 }
 
-# Worker configuration
+# Worker behavior (LOW MEMORY)
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_ACKS_LATE = True
 CELERY_TASK_REJECT_ON_WORKER_LOST = True
 
-# Task time limits (in seconds)
-CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5 minutes
-CELERY_TASK_TIME_LIMIT = 600       # 10 minutes hard limit
+# Time limits
+CELERY_TASK_SOFT_TIME_LIMIT = 300
+CELERY_TASK_TIME_LIMIT = 600
 
-# Logging configuration for Celery
-CELERY_WORKER_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s] %(message)s'
-CELERY_WORKER_TASK_LOG_FORMAT = '[%(asctime)s: %(levelname)s/%(processName)s][%(task_name)s(%(task_id)s)] %(message)s'
+# Beat scheduler (Admin-controlled schedules)
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
-# Add django-celery-beat to installed apps
-INSTALLED_APPS += [
-    'django_celery_beat',
-    'django_celery_results',
-]
-
-CELERY_RESULT_BACKEND = 'django-db'
-CELERY_CACHE_BACKEND = 'django-cache'
-
-# Create logs directory if it doesn't exist
+# =====================
+# LOGGING (FILE + CONSOLE)
+# =====================
 logs_dir = BASE_DIR / 'logs'
-os.makedirs(logs_dir, exist_ok=True)
+logs_dir.mkdir(exist_ok=True)
 
-# Logging configuration
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
     'formatters': {
+        'simple': {'format': '{levelname} {message}', 'style': '{'},
         'verbose': {
             'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
             'style': '{',
         },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
-        },
     },
     'handlers': {
-        'file': {
-            'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'deltastrategy.log',
-            'formatter': 'verbose',
-            'encoding': 'utf-8',  # Fix Unicode encoding issues
-        },
         'console': {
-            'level': 'DEBUG',
             'class': 'logging.StreamHandler',
             'formatter': 'simple',
+        },
+        'file': {
+            'class': 'logging.FileHandler',
+            'filename': BASE_DIR / 'logs/deltastrategy.log',
+            'formatter': 'verbose',
         },
     },
     'root': {
         'handlers': ['console', 'file'],
         'level': 'INFO',
-    },
-    'loggers': {
-        'api': {
-            'handlers': ['console', 'file'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-        'celery': {
-            'handlers': ['console', 'file'],
-            'level': 'INFO',
-            'propagate': False,
-        },
     },
 }
