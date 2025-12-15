@@ -179,7 +179,7 @@ class DeltaClient:
 
         url = self.base + path
         if self.debug:
-            logger.info("GET", url, "params=", params)
+            logger.info(f"GET {url} params={params}")
         r = requests.get(url, params=params, headers={"Accept": "application/json"})
         r.raise_for_status()
         return r.json()
