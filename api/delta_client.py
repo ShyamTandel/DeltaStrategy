@@ -118,13 +118,13 @@ class DeltaClient:
 
         if self.debug:
             logger.info("=== SIGN DEBUG ===")
-            logger.info("method:", method)
-            logger.info("timestamp:", timestamp)
-            logger.info("path:", request_path)
-            logger.info("querystring:", querystring)
-            logger.info("body_str:", body_str)
-            logger.info("prehash:", prehash)
-            logger.info("signature:", sig)
+            logger.info(f"method: {method}")
+            logger.info(f"timestamp: {timestamp}")
+            logger.info(f"path: {request_path}")
+            logger.info(f"querystring: {querystring}")
+            logger.info(f"body_str: {body_str}")
+            logger.info(f"prehash: {prehash}")
+            logger.info(f"signature: {sig}")
             logger.info("=================")
 
         return sig
